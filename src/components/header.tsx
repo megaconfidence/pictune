@@ -1,4 +1,4 @@
-import { ChevronLeft, Download, Redo2, Undo2 } from 'lucide-react';
+import { Download, Redo2, RotateCcw, Undo2 } from 'lucide-react';
 import { Button, Divider } from './ui';
 
 interface HeaderProps {
@@ -8,20 +8,21 @@ interface HeaderProps {
 	compareActive: boolean;
 	compareDisabled: boolean;
 	downloadDisabled: boolean;
-	onBack: () => void;
+	onReset: () => void;
 	onUndo: () => void;
 	onRedo: () => void;
 	onCompare: () => void;
 	onDownload: () => void;
-	onOpenDesigner: () => void;
 }
 
 /**
  * Top bar of the editor.
  *
- *   - Left pill: back arrow + "Get Pro" CTA. Always visible.
- *   - Right toolbar: undo / redo / compare / download / open designer. Only
- *     visible when an image has been loaded, matching designs 2–5.
+ *   - Left pill: reset. Wipes the canvas back to the drop-zone state —
+ *     clears the source image, every cached result, and any in-flight job.
+ *     Only rendered once an image is loaded, since there's nothing to reset
+ *     from on the drop-zone screen.
+ *   - Right toolbar: undo / redo / compare / download. Same visibility rule.
  *
  * Both groups are absolutely positioned to the corners so the header doesn't
  * compete with the central canvas for vertical space.
@@ -33,30 +34,33 @@ export function Header({
 	compareActive,
 	compareDisabled,
 	downloadDisabled,
-	onBack,
+	onReset,
 	onUndo,
 	onRedo,
 	onCompare,
 	onDownload,
-	onOpenDesigner,
 }: HeaderProps) {
 	return (
 		<header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-5">
-			{/* Left: back + Get Pro */}
-			<div className="card pointer-events-auto flex items-center gap-1 p-1.5">
-				<Button variant="icon" aria-label="Go back" onClick={onBack}>
-					<ChevronLeft className="h-5 w-5" strokeWidth={2} />
-				</Button>
-				<Button
-					variant="primary"
-					className="h-9 px-4 text-[13px]"
-					aria-label="Upgrade to Pro"
-				>
-					Get Pro
-				</Button>
-			</div>
+			{/* Left: reset */}
+			{hasImage ? (
+				<div className="card pointer-events-auto flex items-center p-1.5">
+					<Button
+						variant="icon"
+						aria-label="Reset canvas"
+						title="Reset canvas"
+						onClick={onReset}
+					>
+						<RotateCcw className="h-5 w-5" strokeWidth={2} />
+					</Button>
+				</div>
+			) : (
+				// Keep a flex placeholder so the right toolbar stays right-aligned
+				// when there's no image yet.
+				<div />
+			)}
 
-			{/* Right: undo/redo + compare + download + open designer */}
+			{/* Right: undo/redo + compare + download */}
 			{hasImage && (
 				<div className="card pointer-events-auto flex items-center gap-1 p-1.5">
 					<Button
@@ -92,9 +96,6 @@ export function Header({
 						onClick={onDownload}
 					>
 						Download
-					</Button>
-					<Button variant="secondary" onClick={onOpenDesigner}>
-						Open Designer
 					</Button>
 				</div>
 			)}

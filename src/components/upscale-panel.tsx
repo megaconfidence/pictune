@@ -1,15 +1,21 @@
 import clsx from 'clsx';
 import { ChevronDown } from 'lucide-react';
+import { formatElapsed, useElapsed } from '../hooks';
 import type { ImageState, UpscaleSettings } from '../types';
 
 interface UpscalePanelProps {
 	image: ImageState;
 	settings: UpscaleSettings;
 	processing: boolean;
+	/** Timestamp (ms since epoch) of when the current job started, or null. */
+	processingStartedAt: number | null;
 	hasResult: boolean;
 	onChangeSettings: (next: UpscaleSettings) => void;
 	onRetry: () => void;
 }
+
+/** Hide the live counter for the first couple of seconds — it's just noise. */
+const ELAPSED_VISIBLE_AFTER_MS = 3000;
 
 /**
  * Right-hand panel shown when the Upscale tool is active.
@@ -28,12 +34,15 @@ export function UpscalePanel({
 	image,
 	settings,
 	processing,
+	processingStartedAt,
 	hasResult,
 	onChangeSettings,
 	onRetry,
 }: UpscalePanelProps) {
 	const upscaledWidth = image.width * settings.factor;
 	const upscaledHeight = image.height * settings.factor;
+	const elapsedMs = useElapsed(processingStartedAt);
+	const showElapsed = processing && elapsedMs >= ELAPSED_VISIBLE_AFTER_MS;
 
 	return (
 		<div
@@ -114,7 +123,12 @@ export function UpscalePanel({
 				)}
 			>
 				{processing && <InlineSpinner />}
-				{processing ? 'Upscaling…' : hasResult ? 'Retry' : 'Run upscale'}
+				<span>{processing ? 'Upscaling…' : hasResult ? 'Retry' : 'Run upscale'}</span>
+				{showElapsed && (
+					<span className="tabular-nums text-[var(--color-ink-muted)]">
+						{formatElapsed(elapsedMs)}
+					</span>
+				)}
 			</button>
 
 			{/* Dimensions: 1200×1200 → 2400×2400 */}

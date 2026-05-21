@@ -1,4 +1,5 @@
 import clsx from 'clsx';
+import { formatElapsed, useElapsed } from '../hooks';
 import type { ImageState, Tool } from '../types';
 
 interface ImageViewerProps {
@@ -6,8 +7,13 @@ interface ImageViewerProps {
 	tool: Tool;
 	zoom: number;
 	processing: boolean;
+	/** Timestamp (ms since epoch) of when the current job started, or null. */
+	processingStartedAt: number | null;
 	error: string | null;
 }
+
+/** Hide the live counter for the first couple of seconds — it's just noise. */
+const ELAPSED_VISIBLE_AFTER_MS = 3000;
 
 /**
  * Single-image preview shown after a file is uploaded and the user is NOT in
@@ -17,8 +23,7 @@ interface ImageViewerProps {
  *   - background: image floats on a checkerboard pattern. When the processed
  *     image has loaded, the cat (etc.) is on transparent bg so the checker
  *     shows through where the original background used to be.
- *   - retouch / expand / upscale: image rendered as-is on the canvas
- *     background.
+ *   - expand / upscale: image rendered as-is on the canvas background.
  *
  * Overlays:
  *   - When the active tool is processing, we dim the image and show a small
@@ -26,7 +31,14 @@ interface ImageViewerProps {
  *   - When the active tool has errored, we show a one-line message anchored
  *     to the bottom of the image so the user can still see what they've got.
  */
-export function ImageViewer({ image, tool, zoom, processing, error }: ImageViewerProps) {
+export function ImageViewer({
+	image,
+	tool,
+	zoom,
+	processing,
+	processingStartedAt,
+	error,
+}: ImageViewerProps) {
 	const showChecker = tool === 'background';
 
 	return (
@@ -64,7 +76,7 @@ export function ImageViewer({ image, tool, zoom, processing, error }: ImageViewe
 						aria-live="polite"
 						aria-busy
 					>
-						<ProcessingBadge tool={tool} />
+						<ProcessingBadge tool={tool} startedAt={processingStartedAt} />
 					</div>
 				)}
 
@@ -80,17 +92,26 @@ export function ImageViewer({ image, tool, zoom, processing, error }: ImageViewe
 	);
 }
 
-function ProcessingBadge({ tool }: { tool: Tool }) {
+function ProcessingBadge({ tool, startedAt }: { tool: Tool; startedAt: number | null }) {
+	const elapsedMs = useElapsed(startedAt);
+	const showElapsed = elapsedMs >= ELAPSED_VISIBLE_AFTER_MS;
 	const label =
 		tool === 'background'
 			? 'Removing background…'
 			: tool === 'upscale'
 				? 'Upscaling…'
-				: 'Processing…';
+				: tool === 'expand'
+					? 'Expanding…'
+					: 'Processing…';
 	return (
 		<div className="flex items-center gap-2.5 rounded-full bg-white px-4 py-2 text-[13px] font-medium text-[var(--color-ink)] shadow-[0_2px_4px_rgba(0,0,0,0.08),0_8px_24px_rgba(0,0,0,0.08)]">
 			<Spinner />
 			<span>{label}</span>
+			{showElapsed && (
+				<span className="tabular-nums text-[var(--color-ink-muted)]">
+					{formatElapsed(elapsedMs)}
+				</span>
+			)}
 		</div>
 	);
 }

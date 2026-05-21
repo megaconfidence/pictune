@@ -10,7 +10,6 @@ interface SidebarProps {
 
 const tools: { id: Tool; label: string }[] = [
 	{ id: 'background', label: 'Background' },
-	{ id: 'retouch', label: 'Retouch' },
 	{ id: 'expand', label: 'Expand' },
 	{ id: 'upscale', label: 'Upscale' },
 ];

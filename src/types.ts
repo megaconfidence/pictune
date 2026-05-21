@@ -1,4 +1,4 @@
-export type Tool = 'background' | 'retouch' | 'expand' | 'upscale';
+export type Tool = 'background' | 'expand' | 'upscale';
 
 export type UpscaleMode = 'fast' | 'quality';
 export type UpscaleFactor = 2 | 4;
@@ -18,6 +18,104 @@ export interface ImageState {
 export interface UpscaleSettings {
 	mode: UpscaleMode;
 	factor: UpscaleFactor;
+}
+
+/* ──────────────────────────────────────────────────────────────────────── *
+ * Expand tool                                                               *
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Ratios the bria/expand-image model accepts. The model rejects everything
+ * else (including custom floats — despite the description claiming
+ * otherwise), so the UI is built around snapping to one of these.
+ */
+export const ASPECT_RATIO_PRESETS = [
+	'1:1',
+	'16:9',
+	'9:16',
+	'3:2',
+	'2:3',
+	'4:3',
+	'3:4',
+	'4:5',
+	'5:4',
+] as const;
+
+export type AspectRatioPreset = (typeof ASPECT_RATIO_PRESETS)[number];
+
+/**
+ * The dropdown value. `'custom'` means "use the W/H inputs to derive a
+ * ratio, then snap to the closest preset" — the model can't actually
+ * accept arbitrary canvas sizes so we surface the chosen preset to the
+ * user via the preview readout.
+ */
+export type AspectRatioChoice = AspectRatioPreset | 'custom';
+
+export interface ExpandSettings {
+	choice: AspectRatioChoice;
+	/** Width input (drives ratio when in Custom; preview in preset modes). */
+	width: number;
+	/** Height input (drives ratio when in Custom; preview in preset modes). */
+	height: number;
+	/**
+	 * Chain icon state: when true, editing one of W/H proportionally
+	 * updates the other. Only really meaningful in Custom mode — preset
+	 * modes always behave as if linked.
+	 */
+	linked: boolean;
+}
+
+/** Parse a preset like `'16:9'` into the numeric pair `[16, 9]`. */
+export function parseRatio(preset: AspectRatioPreset): [number, number] {
+	const [w, h] = preset.split(':').map(Number);
+	return [w, h];
+}
+
+/**
+ * Compute the dimensions the model will return for a given source +
+ * target ratio. The model keeps one of the source dimensions and grows
+ * the other to satisfy the ratio (it never shrinks the source), so we
+ * mirror that math to give the UI an accurate after-size preview.
+ */
+export function expandDimensionsForRatio(
+	srcWidth: number,
+	srcHeight: number,
+	ratioW: number,
+	ratioH: number,
+): { width: number; height: number } {
+	const srcRatio = srcWidth / srcHeight;
+	const targetRatio = ratioW / ratioH;
+	if (targetRatio > srcRatio) {
+		// Target wider than source → keep height, grow width.
+		return { width: Math.round(srcHeight * targetRatio), height: srcHeight };
+	}
+	if (targetRatio < srcRatio) {
+		// Target taller than source → keep width, grow height.
+		return { width: srcWidth, height: Math.round(srcWidth / targetRatio) };
+	}
+	return { width: srcWidth, height: srcHeight };
+}
+
+/**
+ * Snap an arbitrary W×H to the supported preset whose ratio is closest.
+ * Used in Custom mode — we keep the user's typed numbers in the inputs
+ * for visual continuity but tell them (and the model) which preset will
+ * actually be applied.
+ */
+export function snapToNearestPreset(width: number, height: number): AspectRatioPreset {
+	if (width <= 0 || height <= 0) return '1:1';
+	const target = width / height;
+	let best: AspectRatioPreset = '1:1';
+	let bestDelta = Infinity;
+	for (const preset of ASPECT_RATIO_PRESETS) {
+		const [w, h] = parseRatio(preset);
+		const delta = Math.abs(w / h - target);
+		if (delta < bestDelta) {
+			bestDelta = delta;
+			best = preset;
+		}
+	}
+	return best;
 }
 
 /**

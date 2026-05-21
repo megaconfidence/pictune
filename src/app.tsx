@@ -1,13 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from './api';
+import { BackgroundPanel } from './components/background-panel';
 import { BottomControls } from './components/bottom-controls';
 import { CompareSlider } from './components/compare-slider';
 import { DropZone } from './components/drop-zone';
+import { ExpandPanel } from './components/expand-panel';
 import { Header } from './components/header';
 import { ImageViewer } from './components/image-viewer';
 import { Sidebar } from './components/sidebar';
 import { UpscalePanel } from './components/upscale-panel';
-import { blobToImageState, type ImageState, type Tool, type UpscaleSettings } from './types';
+import {
+	type AspectRatioPreset,
+	blobToImageState,
+	type ExpandSettings,
+	type ImageState,
+	type Tool,
+	type UpscaleSettings,
+} from './types';
 
 /**
  * Top-level container.
@@ -41,8 +50,12 @@ export default function App() {
 	const [upscaleResult, setUpscaleResult] = useState<
 		{ image: ImageState; settings: UpscaleSettings } | null
 	>(null);
+	const [expandResult, setExpandResult] = useState<
+		{ image: ImageState; ratio: AspectRatioPreset } | null
+	>(null);
 
 	const [processing, setProcessing] = useState<Tool | null>(null);
+	const [processingStartedAt, setProcessingStartedAt] = useState<number | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	const [compareActive, setCompareActive] = useState(false);
@@ -50,6 +63,12 @@ export default function App() {
 	const [upscaleSettings, setUpscaleSettings] = useState<UpscaleSettings>({
 		mode: 'fast',
 		factor: 2,
+	});
+	const [expandSettings, setExpandSettings] = useState<ExpandSettings>({
+		choice: 'custom',
+		width: 0,
+		height: 0,
+		linked: true,
 	});
 
 	// One AbortController for whatever async API call is currently in flight.
@@ -62,6 +81,7 @@ export default function App() {
 	useEffect(() => () => revoke(original), [original]);
 	useEffect(() => () => revoke(background), [background]);
 	useEffect(() => () => revoke(upscaleResult?.image), [upscaleResult]);
+	useEffect(() => () => revoke(expandResult?.image), [expandResult]);
 
 	/* ------------------------------------------------------------------ *
 	 * File handling                                                       *
@@ -81,6 +101,13 @@ export default function App() {
 			// Reset per-image derived state.
 			setBackground(null);
 			setUpscaleResult(null);
+			setExpandResult(null);
+			setExpandSettings({
+				choice: 'custom',
+				width: probe.naturalWidth,
+				height: probe.naturalHeight,
+				linked: true,
+			});
 			setCompareActive(false);
 			setZoom(1);
 			setError(null);
@@ -89,13 +116,15 @@ export default function App() {
 		probe.src = url;
 	}, []);
 
-	const handleBack = useCallback(() => {
+	const handleReset = useCallback(() => {
 		abortRef.current?.abort();
 		setOriginal(null);
 		setOriginalFile(null);
 		setBackground(null);
 		setUpscaleResult(null);
+		setExpandResult(null);
 		setProcessing(null);
+		setProcessingStartedAt(null);
 		setError(null);
 		setCompareActive(false);
 		setZoom(1);
@@ -121,16 +150,20 @@ export default function App() {
 			const controller = new AbortController();
 			abortRef.current = controller;
 			setProcessing('background');
+			setProcessingStartedAt(Date.now());
 			setError(null);
 			try {
-				const blob = await api.removeBackground(file, controller.signal);
+				const blob = await api.removeBackground(file, { signal: controller.signal });
 				const image = await blobToImageState(blob, 'background-removed.png');
 				setBackground(image);
 			} catch (e) {
 				if (controller.signal.aborted) return;
 				setError(messageFor(e));
 			} finally {
-				if (!controller.signal.aborted) setProcessing(null);
+				if (!controller.signal.aborted) {
+					setProcessing(null);
+					setProcessingStartedAt(null);
+				}
 			}
 		},
 		[],
@@ -142,35 +175,59 @@ export default function App() {
 			const controller = new AbortController();
 			abortRef.current = controller;
 			setProcessing('upscale');
+			setProcessingStartedAt(Date.now());
 			setError(null);
 			try {
-				const blob = await api.upscale(file, settings, controller.signal);
+				const blob = await api.upscale(file, settings, { signal: controller.signal });
 				const image = await blobToImageState(blob, 'upscaled.png');
 				setUpscaleResult({ image, settings });
 			} catch (e) {
 				if (controller.signal.aborted) return;
 				setError(messageFor(e));
 			} finally {
-				if (!controller.signal.aborted) setProcessing(null);
+				if (!controller.signal.aborted) {
+					setProcessing(null);
+					setProcessingStartedAt(null);
+				}
 			}
 		},
 		[],
 	);
 
-	// Auto-trigger background removal whenever a new file is uploaded or the
-	// user switches to the Background tool with no cached result. It's cheap
-	// (~$0.001/call) and the entire point of selecting that tool, so making
-	// the user push another button would feel broken.
-	//
-	// Upscale is NOT auto-triggered — clarity-pro is priced per output
-	// megapixel ($0.03/MP, $0.03 minimum). The user opts in via the
-	// "Run upscale" button in the right-hand panel.
-	useEffect(() => {
+	const runExpand = useCallback(
+		async (file: File, ratio: AspectRatioPreset) => {
+			abortRef.current?.abort();
+			const controller = new AbortController();
+			abortRef.current = controller;
+			setProcessing('expand');
+			setProcessingStartedAt(Date.now());
+			setError(null);
+			try {
+				const blob = await api.expand(file, ratio, { signal: controller.signal });
+				const image = await blobToImageState(blob, `expanded-${ratio.replace(':', 'x')}.png`);
+				setExpandResult({ image, ratio });
+			} catch (e) {
+				if (controller.signal.aborted) return;
+				setError(messageFor(e));
+			} finally {
+				if (!controller.signal.aborted) {
+					setProcessing(null);
+					setProcessingStartedAt(null);
+				}
+			}
+		},
+		[],
+	);
+
+	// None of the three tools auto-run any more — every Replicate call costs
+	// money, so we wait for the user to opt in via the panel's Run button.
+	// The panels handle the per-tool variants (settings, dimensions, etc.).
+
+	const handleRunBackground = useCallback(() => {
 		if (!originalFile) return;
-		if (tool === 'background' && !background && processing !== 'background') {
-			void runBackground(originalFile);
-		}
-	}, [originalFile, tool, background, processing, runBackground]);
+		setBackground(null);
+		void runBackground(originalFile);
+	}, [originalFile, runBackground]);
 
 	const handleRetryUpscale = useCallback(() => {
 		if (!originalFile) return;
@@ -178,12 +235,26 @@ export default function App() {
 		void runUpscale(originalFile, upscaleSettings);
 	}, [originalFile, upscaleSettings, runUpscale]);
 
+	const handleGenerateExpand = useCallback(
+		(effectiveRatio: AspectRatioPreset) => {
+			if (!originalFile) return;
+			setExpandResult(null);
+			void runExpand(originalFile, effectiveRatio);
+		},
+		[originalFile, runExpand],
+	);
+
 	/* ------------------------------------------------------------------ *
 	 * Download                                                            *
 	 * ------------------------------------------------------------------ */
 
 	const downloadCurrent = useCallback(() => {
-		const result = currentResult(tool, background, upscaleResult?.image);
+		const result = currentResult(
+			tool,
+			background,
+			upscaleResult?.image,
+			expandResult?.image,
+		);
 		if (!result) return;
 		const a = document.createElement('a');
 		a.href = result.url;
@@ -191,7 +262,7 @@ export default function App() {
 		document.body.appendChild(a);
 		a.click();
 		a.remove();
-	}, [tool, background, upscaleResult]);
+	}, [tool, background, upscaleResult, expandResult]);
 
 	/* ------------------------------------------------------------------ *
 	 * Zoom                                                                *
@@ -205,7 +276,12 @@ export default function App() {
 	 * Derived view state                                                  *
 	 * ------------------------------------------------------------------ */
 
-	const result = currentResult(tool, background, upscaleResult?.image);
+	const result = currentResult(
+		tool,
+		background,
+		upscaleResult?.image,
+		expandResult?.image,
+	);
 	const isProcessing = processing === tool;
 	const canCompare = !!result && !!original && !isProcessing;
 	const canDownload = !!result;
@@ -223,14 +299,11 @@ export default function App() {
 				compareActive={compareActive}
 				compareDisabled={!canCompare}
 				downloadDisabled={!canDownload}
-				onBack={handleBack}
+				onReset={handleReset}
 				onUndo={() => {}}
 				onRedo={() => {}}
 				onCompare={() => setCompareActive((c) => !c)}
 				onDownload={downloadCurrent}
-				onOpenDesigner={() => {
-					/* not wired */
-				}}
 			/>
 
 			<div className="flex w-full items-stretch pt-24 pb-24">
@@ -258,19 +331,42 @@ export default function App() {
 								tool={tool}
 								zoom={zoom}
 								processing={isProcessing}
+								processingStartedAt={isProcessing ? processingStartedAt : null}
 								error={error}
 							/>
 						)}
 					</main>
+
+					{original && tool === 'background' && (
+						<BackgroundPanel
+							processing={isProcessing}
+							processingStartedAt={isProcessing ? processingStartedAt : null}
+							result={background}
+							onRun={handleRunBackground}
+						/>
+					)}
 
 					{original && tool === 'upscale' && (
 						<UpscalePanel
 							image={original}
 							settings={upscaleSettings}
 							processing={isProcessing}
+							processingStartedAt={isProcessing ? processingStartedAt : null}
 							hasResult={!!upscaleResult}
 							onChangeSettings={setUpscaleSettings}
 							onRetry={handleRetryUpscale}
+						/>
+					)}
+
+					{original && tool === 'expand' && (
+						<ExpandPanel
+							image={original}
+							settings={expandSettings}
+							processing={isProcessing}
+							processingStartedAt={isProcessing ? processingStartedAt : null}
+							result={expandResult?.image ?? null}
+							onChangeSettings={setExpandSettings}
+							onGenerate={handleGenerateExpand}
 						/>
 					)}
 				</div>
@@ -293,9 +389,11 @@ function currentResult(
 	tool: Tool,
 	background: ImageState | null,
 	upscale: ImageState | undefined,
+	expand: ImageState | undefined,
 ): ImageState | null {
 	if (tool === 'background') return background;
 	if (tool === 'upscale') return upscale ?? null;
+	if (tool === 'expand') return expand ?? null;
 	return null;
 }
 
