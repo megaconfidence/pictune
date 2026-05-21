@@ -21,6 +21,38 @@ export interface UpscaleSettings {
 }
 
 /* ──────────────────────────────────────────────────────────────────────── *
+ * Per-tool result state + undo/redo                                         *
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/**
+ * The cached result for each tool. `null` means "not yet run" (or undone).
+ * These types are referenced from the Action discriminated union so that
+ * undo/redo can restore them losslessly without re-running the API.
+ */
+export type BackgroundState = ImageState | null;
+
+export interface UpscaleResultData {
+	image: ImageState;
+	settings: UpscaleSettings;
+}
+export type UpscaleState = UpscaleResultData | null;
+
+/**
+ * One entry in the undo / redo history. Records a single transition for a
+ * single tool's cached result — produced when the user clicks Run (records
+ * `{ before: prior, after: newResult }`) or X (records
+ * `{ before: prior, after: null }`).
+ *
+ * Per-tool discrimination keeps before/after type-safe: a 'background'
+ * action's before/after are both `BackgroundState`, etc. This means undo /
+ * redo can apply either side without runtime type tags on the payloads.
+ */
+export type Action =
+	| { tool: 'background'; before: BackgroundState; after: BackgroundState }
+	| { tool: 'upscale'; before: UpscaleState; after: UpscaleState }
+	| { tool: 'expand'; before: ExpandResultState; after: ExpandResultState };
+
+/* ──────────────────────────────────────────────────────────────────────── *
  * Expand tool                                                               *
  * ──────────────────────────────────────────────────────────────────────── */
 
@@ -64,6 +96,17 @@ export interface ExpandSettings {
 	 */
 	linked: boolean;
 }
+
+/**
+ * Cached output of the Expand tool. Stores the chosen ratio alongside the
+ * image so the panel can show "Target 16:9" even after the user navigates
+ * away and back.
+ */
+export interface ExpandResultData {
+	image: ImageState;
+	ratio: AspectRatioPreset;
+}
+export type ExpandResultState = ExpandResultData | null;
 
 /** Parse a preset like `'16:9'` into the numeric pair `[16, 9]`. */
 export function parseRatio(preset: AspectRatioPreset): [number, number] {
