@@ -1,0 +1,14 @@
+<svg
+	width="64"
+	height="64"
+	viewBox="0 0 64 64"
+	xmlns="http://www.w3.org/2000/svg"
+>
+	<title>Pictune</title>
+	<rect width="64" height="64" rx="14" fill="#2563eb" />
+	<path
+		fill="#ffffff"
+		fill-rule="evenodd"
+		d="M18 12 L26 12 C38 12 48 18 48 24 C48 30 38 36 26 36 L26 52 L18 52 Z M26 20 C34 20 40 22 40 24 C40 26 34 28 26 28 Z"
+	/>
+</svg>
