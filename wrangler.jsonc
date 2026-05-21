@@ -18,8 +18,48 @@
 		// Declared here so `wrangler types` generates a typed binding and
 		// `wrangler deploy` fails fast if the secret isn't set in production.
 		// Local dev loads the value from .env (or .dev.vars).
-		"required": ["REPLICATE_API_TOKEN"]
+		//
+		//   REPLICATE_API_TOKEN    — auth for Replicate API calls.
+		//   ADMIN_PASSPHRASE       — gates /api/admin/stats and the /admin page.
+		//   TURNSTILE_SECRET_KEY   — used to call Cloudflare's siteverify endpoint
+		//                            when validating browser-issued tokens on
+		//                            transformation POSTs. The matching sitekey is
+		//                            exposed to the client as VITE_TURNSTILE_SITE_KEY.
+		"required": ["REPLICATE_API_TOKEN", "ADMIN_PASSPHRASE", "TURNSTILE_SECRET_KEY"]
 	},
+	// Durable Objects we own:
+	//
+	//   RATE_LIMITER (per IP, addressed via getByName(ip)) — caps each client
+	//     to 100 transformations / hour. The 10/60s windows of the built-in
+	//     Workers Rate Limiting binding aren't long enough, so we roll our
+	//     own with a SQLite-backed sliding-window counter.
+	//     See src/rate-limiter.ts.
+	//
+	//   ANALYTICS (single global instance, addressed via getByName('global')) —
+	//     append-only event log for the /admin dashboard.
+	//     See src/analytics.ts.
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "RATE_LIMITER",
+				"class_name": "RateLimiter"
+			},
+			{
+				"name": "ANALYTICS",
+				"class_name": "Analytics"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": ["RateLimiter"]
+		},
+		{
+			"tag": "v2",
+			"new_sqlite_classes": ["Analytics"]
+		}
+	],
 	"observability": {
 		"enabled": true
 	},

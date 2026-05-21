@@ -41,12 +41,7 @@ export function BackgroundPanel({
 			className="card-floating w-[260px] flex-shrink-0 p-4"
 			aria-label="Background settings"
 		>
-			<h2 className="mb-1 text-[15px] font-semibold text-[var(--color-ink)]">Background</h2>
-
-			<p className="mb-3 text-[12.5px] leading-snug text-[var(--color-ink-muted)]">
-				Remove the background from your image. Keeps the subject on a transparent
-				canvas.
-			</p>
+			<h2 className="mb-3 text-[15px] font-semibold text-[var(--color-ink)]">Background</h2>
 
 			<button
 				type="button"
@@ -61,9 +56,16 @@ export function BackgroundPanel({
 				)}
 			>
 				{processing && <InlineSpinner />}
-				<span>{processing ? 'Removing background…' : hasResult ? 'Re-run' : 'Run'}</span>
+				{/*
+				 * Short label during processing — "Removing background…" + the
+				 * elapsed badge would wrap and break the button layout in this
+				 * 260-px panel. The canvas-centered ProcessingBadge already
+				 * spells out the full action ("Removing background… 0:15") with
+				 * plenty of room, so the button just needs to confirm activity.
+				 */}
+				<span>{processing ? 'Removing…' : hasResult ? 'Re-run' : 'Run'}</span>
 				{showElapsed && (
-					<span className="ml-1 tabular-nums text-white/80">
+					<span className="tabular-nums text-white/80">
 						{formatElapsed(elapsedMs)}
 					</span>
 				)}

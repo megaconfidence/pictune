@@ -9,6 +9,7 @@ import { Header } from './components/header';
 import { ImageViewer } from './components/image-viewer';
 import { Sidebar } from './components/sidebar';
 import { UpscalePanel } from './components/upscale-panel';
+import { useTurnstile } from './turnstile';
 import {
 	type Action,
 	type AspectRatioPreset,
@@ -86,6 +87,12 @@ export default function App() {
 	// Aborting on new run / X-on-running-tool / reset prevents stale state
 	// from clobbering what the user actually wants to see.
 	const abortRef = useRef<AbortController | null>(null);
+
+	// Cloudflare Turnstile token source. getToken() blocks until the widget
+	// has a fresh token ready; we await it inside each run* below so the
+	// processing spinner appears immediately and the verification delay
+	// (usually <100ms) is folded into the overall progress UI.
+	const { getToken: getTurnstileToken } = useTurnstile();
 
 	// All blob/object URLs we own. Revoked on Reset / new upload / unmount.
 	// We can't auto-revoke on state change because undo and redo refer back
@@ -283,7 +290,12 @@ export default function App() {
 			setProcessingStartedAt(Date.now());
 			setError(null);
 			try {
-				const blob = await api.removeBackground(file, { signal: controller.signal });
+				const turnstileToken = await getTurnstileToken();
+				if (controller.signal.aborted) return;
+				const blob = await api.removeBackground(file, {
+					signal: controller.signal,
+					turnstileToken,
+				});
 				if (controller.signal.aborted) return;
 				const image = await blobToImageState(blob, 'background-removed.png');
 				if (controller.signal.aborted) return;
@@ -300,7 +312,7 @@ export default function App() {
 				}
 			}
 		},
-		[recordAction, trackUrl],
+		[recordAction, trackUrl, getTurnstileToken],
 	);
 
 	const runUpscale = useCallback(
@@ -312,7 +324,12 @@ export default function App() {
 			setProcessingStartedAt(Date.now());
 			setError(null);
 			try {
-				const blob = await api.upscale(file, settings, { signal: controller.signal });
+				const turnstileToken = await getTurnstileToken();
+				if (controller.signal.aborted) return;
+				const blob = await api.upscale(file, settings, {
+					signal: controller.signal,
+					turnstileToken,
+				});
 				if (controller.signal.aborted) return;
 				const image = await blobToImageState(blob, 'upscaled.png');
 				if (controller.signal.aborted) return;
@@ -330,7 +347,7 @@ export default function App() {
 				}
 			}
 		},
-		[recordAction, trackUrl],
+		[recordAction, trackUrl, getTurnstileToken],
 	);
 
 	const runExpand = useCallback(
@@ -342,7 +359,12 @@ export default function App() {
 			setProcessingStartedAt(Date.now());
 			setError(null);
 			try {
-				const blob = await api.expand(file, ratio, { signal: controller.signal });
+				const turnstileToken = await getTurnstileToken();
+				if (controller.signal.aborted) return;
+				const blob = await api.expand(file, ratio, {
+					signal: controller.signal,
+					turnstileToken,
+				});
 				if (controller.signal.aborted) return;
 				const image = await blobToImageState(blob, `expanded-${ratio.replace(':', 'x')}.png`);
 				if (controller.signal.aborted) return;
@@ -360,7 +382,7 @@ export default function App() {
 				}
 			}
 		},
-		[recordAction, trackUrl],
+		[recordAction, trackUrl, getTurnstileToken],
 	);
 
 	const handleRunBackground = useCallback(() => {

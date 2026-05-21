@@ -70,13 +70,20 @@ interface PredictionResponse {
 interface RunOptions {
 	signal?: AbortSignal;
 	onProgress?: (progress: PredictionProgress) => void;
+	/**
+	 * Cloudflare Turnstile token — single-use, ~5-minute lifetime, obtained
+	 * from the widget rendered by TurnstileProvider. Required for the start
+	 * POST; not used by the poll or output fetches (those are unguarded by
+	 * design — see server.ts header comment for why).
+	 */
+	turnstileToken: string;
 }
 
 /* ──────────────────────────────────────────────────────────────────────── *
  * Public entry points                                                       *
  * ──────────────────────────────────────────────────────────────────────── */
 
-export async function removeBackground(file: File, options: RunOptions = {}): Promise<Blob> {
+export async function removeBackground(file: File, options: RunOptions): Promise<Blob> {
 	const form = new FormData();
 	form.append('image', file);
 	return await runPrediction('/api/remove-background', form, options);
@@ -85,7 +92,7 @@ export async function removeBackground(file: File, options: RunOptions = {}): Pr
 export async function upscale(
 	file: File,
 	settings: UpscaleSettings,
-	options: RunOptions = {},
+	options: RunOptions,
 ): Promise<Blob> {
 	const form = new FormData();
 	form.append('image', file);
@@ -97,7 +104,7 @@ export async function upscale(
 export async function expand(
 	file: File,
 	aspectRatio: AspectRatioPreset,
-	options: RunOptions = {},
+	options: RunOptions,
 ): Promise<Blob> {
 	const form = new FormData();
 	form.append('image', file);
@@ -117,11 +124,19 @@ export async function expand(
 async function runPrediction(
 	startEndpoint: string,
 	form: FormData,
-	{ signal, onProgress }: RunOptions,
+	{ signal, onProgress, turnstileToken }: RunOptions,
 ): Promise<Blob> {
 	throwIfAborted(signal);
 
-	const startRes = await fetch(startEndpoint, { method: 'POST', body: form, signal });
+	// Turnstile token rides in a header (not a form field) so the Worker can
+	// read it without consuming the multipart body — the start handlers
+	// need the FormData themselves to pull out the image bytes.
+	const startRes = await fetch(startEndpoint, {
+		method: 'POST',
+		body: form,
+		signal,
+		headers: { 'cf-turnstile-response': turnstileToken },
+	});
 	if (!startRes.ok) {
 		throw new Error(await readError(startRes, 'Failed to start prediction'));
 	}
@@ -146,14 +161,20 @@ async function runPrediction(
 	}
 }
 
+/** The bits of RunOptions that the poll loop actually needs. */
+type PollOptions = Pick<RunOptions, 'signal' | 'onProgress'>;
+
 /**
  * Poll the status endpoint with exponential backoff + jitter until the
  * prediction reaches a terminal state. Returns the worker-proxied output URL
  * on success; throws on failure, cancel, abort, or timeout.
+ *
+ * No Turnstile token needed here: polling is unguarded server-side. See the
+ * header comment in src/server.ts for why.
  */
 async function pollUntilDone(
 	initial: PredictionResponse,
-	{ signal, onProgress }: RunOptions,
+	{ signal, onProgress }: PollOptions,
 ): Promise<string> {
 	const startedAt = Date.now();
 	let attempt = 0;

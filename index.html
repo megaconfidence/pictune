@@ -6,6 +6,18 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<meta name="theme-color" content="#fafaf9" />
 		<title>Pictune — AI Image Editor</title>
+		<!--
+			Cloudflare Turnstile. `?render=explicit` keeps the script from
+			auto-rendering any `.cf-turnstile` divs on its own — our
+			TurnstileProvider calls `turnstile.render()` explicitly so it
+			can manage the widget id, token callbacks, and StrictMode-safe
+			cleanup. async+defer keeps the script off the critical path.
+		-->
+		<script
+			src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+			async
+			defer
+		></script>
 	</head>
 	<body>
 		<div id="root"></div>
