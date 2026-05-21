@@ -548,7 +548,6 @@ export default function App() {
 				onZoomIn={zoomIn}
 				onZoomOut={zoomOut}
 				onFit={fit}
-				onHelp={() => {}}
 			/>
 		</div>
 	);
