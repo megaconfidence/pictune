@@ -9,6 +9,8 @@
 Three tools — background removal, upscaling, and expansion — served straight
 from Cloudflare's edge. No signup, no watermarks, no upsells.
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/megaconfidence/pictune)
+
 <br/>
 
 <img src="docs/result-compare.jpg" alt="The Pictune editor showing a before/after compare slider of background removal on a cat photo" width="100%"/>
