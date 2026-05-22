@@ -11,7 +11,7 @@ from Cloudflare's edge. No signup, no watermarks, no upsells.
 
 <br/>
 
-<img src="docs/result-compare.jpg" alt="The Pictune editor showing a before/after compare slider of background removal on a kitten photo" width="100%"/>
+<img src="docs/result-compare.jpg" alt="The Pictune editor showing a before/after compare slider of background removal on a cat photo" width="100%"/>
 
 </div>
 
@@ -23,10 +23,10 @@ from Cloudflare's edge. No signup, no watermarks, no upsells.
 
 ### Remove backgrounds
 
-Drop a photo, click **Run**. A subject-aware model returns a clean PNG with
-the background cut out — preserving fur, hair, and soft edges.
+Drop a photo, click **Remove background**. A subject-aware model returns a
+clean PNG with the background cut out — preserving fur, hair, and soft edges.
 
-<img src="docs/tool-background.jpg" alt="Pictune background-removal tool with a kitten loaded on the canvas" width="100%"/>
+<img src="docs/tool-background.jpg" alt="Pictune background-removal tool with a cat loaded on the canvas" width="100%"/>
 
 <details>
 <summary>Details</summary>

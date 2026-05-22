@@ -3,12 +3,29 @@
 	height="64"
 	viewBox="0 0 64 64"
 	xmlns="http://www.w3.org/2000/svg"
+	role="img"
 >
 	<title>Pictune</title>
-	<rect width="64" height="64" rx="14" fill="#FFFFFF" stroke="#E5E5E5" stroke-width="1" />
-	<path
-		fill="#0A0A0A"
-		d="M22.4 14.5h6.8c3.5 0 6.2.7 8.3 2.2 2 1.5 3 3.6 3 6.3 0 2-.5 3.7-1.6 5.1-1 1.4-2.5 2.5-4.5 3.3-2 .8-4.3 1.1-7 1.1h-1.8v15.2h-3.2V14.5Zm3.2 2.9v12.2h1.7c2.2 0 4.1-.3 5.6-.8 1.5-.5 2.6-1.3 3.4-2.3.7-1 1.1-2.2 1.1-3.6 0-1.7-.7-3-2-3.9-1.4-1-3.5-1.4-6.2-1.4h-3.6Z"
-	/>
-	<circle cx="46" cy="46" r="3.5" fill="#0E7C66" />
+	<!--
+		Ink rounded square — same near-black (#0A0A0A) and corner radius
+		ratio (≈22%) as a typical macOS/iOS app tile, so the mark sits
+		comfortably in a browser tab, a dock, or a home screen.
+	-->
+	<rect width="64" height="64" rx="14" fill="#0A0A0A" />
+
+	<!--
+		Lowercase 'p' — matches the in-app wordmark ("pictune •").
+		The bowl is a clean circle, the stem a vertical bar whose right
+		edge dissolves into the bowl. Together they read as a geometric
+		'p' confident enough to survive at 16×16.
+	-->
+	<circle cx="34" cy="26" r="14" fill="#FFFFFF" />
+	<rect x="18" y="13" width="9" height="40" rx="1.5" fill="#FFFFFF" />
+
+	<!--
+		Teal counter — the brand dot from "pictune •" promoted from
+		punctuation to a structural part of the letter. The only color
+		moment in the mark; same #0E7C66 used for every primary CTA.
+	-->
+	<circle cx="34" cy="26" r="6.5" fill="#0E7C66" />
 </svg>
