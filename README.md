@@ -28,8 +28,6 @@ from Cloudflare's edge. No signup, no watermarks, no upsells.
 Drop a photo, click **Remove background**. A subject-aware model returns a
 clean PNG with the background cut out — preserving fur, hair, and soft edges.
 
-<img src="docs/tool-background.jpg" alt="Pictune background-removal tool with a cat loaded on the canvas" width="100%"/>
-
 <details>
 <summary>Details</summary>
 
@@ -49,8 +47,6 @@ clean PNG with the background cut out — preserving fur, hair, and soft edges.
 Two profiles for two needs. **Fast** stays faithful to the original; **Quality**
 adds plausible detail to recover over-smoothed features.
 
-<img src="docs/tool-upscale.jpg" alt="Pictune upscale tool with Fast/Quality and 2x/4x controls" width="100%"/>
-
 <details>
 <summary>Details</summary>
 
@@ -69,8 +65,6 @@ adds plausible detail to recover over-smoothed features.
 
 Outpaint your image to any aspect ratio. Link width and height for
 proportional expansion, or unlock for custom dimensions.
-
-<img src="docs/tool-expand.jpg" alt="Pictune expand tool with linked W/H controls and a 1:1 target" width="100%"/>
 
 <details>
 <summary>Details</summary>
