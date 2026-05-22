@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from './api';
 import { BackgroundPanel } from './components/background-panel';
@@ -22,6 +23,24 @@ import {
 	type UpscaleSettings,
 	type UpscaleState,
 } from './types';
+
+/* ---------------------------------------------------------------------- *
+ * Zoom bounds                                                              *
+ *                                                                          *
+ * Kept module-level so both the imperative wheel handler and the           *
+ * declarative button callbacks share one source of truth. The wheel rate   *
+ * was tuned by feel: 0.003 makes one mouse-wheel notch (~100 deltaY) feel  *
+ * like a step, while trackpad scroll/pinch (smaller deltaY per frame)      *
+ * accumulates smoothly without overshooting.                               *
+ * ---------------------------------------------------------------------- */
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 3;
+const ZOOM_STEP = 0.1;
+const WHEEL_ZOOM_RATE = 0.003;
+
+function clamp(n: number, min: number, max: number) {
+	return Math.max(min, Math.min(max, n));
+}
 
 /**
  * Top-level container.
@@ -72,6 +91,13 @@ export default function App() {
 
 	const [compareActive, setCompareActive] = useState(false);
 	const [zoom, setZoom] = useState(1);
+	// Translation of the image relative to the canvas viewport (screen
+	// pixels). Only meaningful when zoom > 1 — at fit/zoom-out the image
+	// is centered by flex and we hold pan at (0,0). The transform on
+	// ImageViewer applies translate AFTER scale so dx maps 1:1 to screen
+	// pixels regardless of current zoom.
+	const [pan, setPan] = useState({ x: 0, y: 0 });
+	const [isPanning, setIsPanning] = useState(false);
 	const [upscaleSettings, setUpscaleSettings] = useState<UpscaleSettings>({
 		mode: 'fast',
 		factor: 2,
@@ -205,6 +231,7 @@ export default function App() {
 			});
 			setCompareActive(false);
 			setZoom(1);
+			setPan({ x: 0, y: 0 });
 			setError(null);
 		};
 		probe.onerror = () => URL.revokeObjectURL(url);
@@ -227,6 +254,7 @@ export default function App() {
 		setError(null);
 		setCompareActive(false);
 		setZoom(1);
+		setPan({ x: 0, y: 0 });
 	}, []);
 
 	const handleSelectTool = useCallback((next: Tool) => {
@@ -425,11 +453,157 @@ export default function App() {
 
 	/* ------------------------------------------------------------------ *
 	 * Zoom                                                                *
-	 * ------------------------------------------------------------------ */
+	 * ------------------------------------------------------------------ *
+	 *
+	 * Two input paths:
+	 *   - Buttons (BottomControls): ±0.1 fixed steps, snapped via toFixed
+	 *     so the % readout always lands on clean values (100, 110, 120…).
+	 *   - Wheel / trackpad pinch (mainRef effect below): multiplicative
+	 *     so the rate of change feels constant at any zoom level. Smooth
+	 *     CSS transition is disabled while the wheel is firing so the
+	 *     image tracks the gesture 1:1 instead of lagging behind the
+	 *     240ms ease curve — re-enabled ~150ms after the wheel stops.
+	 *
+	 * Range chosen to keep the image useful: 25% (legibly small inside
+	 * the viewport) to 300% (close-up without becoming a pixel grid).
+	 */
 
-	const zoomIn = useCallback(() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2))), []);
-	const zoomOut = useCallback(() => setZoom((z) => Math.max(0.25, +(z - 0.1).toFixed(2))), []);
+	const zoomIn = useCallback(
+		() => setZoom((z) => Math.min(ZOOM_MAX, +(z + ZOOM_STEP).toFixed(2))),
+		[],
+	);
+	const zoomOut = useCallback(
+		() => setZoom((z) => Math.max(ZOOM_MIN, +(z - ZOOM_STEP).toFixed(2))),
+		[],
+	);
 	const fit = useCallback(() => setZoom(1), []);
+
+	// True while no recent wheel activity — drives the 240ms transition
+	// on the image scale. Flipped off during wheel for a 1:1 feel.
+	const [smoothZoom, setSmoothZoom] = useState(true);
+	const mainRef = useRef<HTMLElement>(null);
+	const wheelEndTimerRef = useRef<number | null>(null);
+
+	useEffect(() => {
+		const el = mainRef.current;
+		if (!el) return;
+
+		function handleWheel(e: WheelEvent) {
+			// preventDefault stops:
+			//   - the browser's native page zoom on trackpad pinch
+			//     (which dispatches wheel + ctrlKey)
+			//   - the document scroll on plain mouse wheel
+			// React's synthetic onWheel is passive in modern React, so
+			// this needs to be a native non-passive listener.
+			e.preventDefault();
+
+			// deltaY > 0 means user scrolled DOWN / pinched OUT → zoom out.
+			// Multiplicative so the rate is constant: at z=0.3 a tick still
+			// feels like the same fraction of zoom as at z=2.0.
+			// 0.003 chosen by feel: one mouse-wheel notch (deltaY≈100)
+			// gives ~1.35× / 0.74×, trackpad scrolls accumulate smoothly.
+			const factor = Math.exp(-e.deltaY * WHEEL_ZOOM_RATE);
+			setZoom((z) => clamp(z * factor, ZOOM_MIN, ZOOM_MAX));
+
+			// Disable transition while gesture is active.
+			setSmoothZoom(false);
+			if (wheelEndTimerRef.current !== null) {
+				window.clearTimeout(wheelEndTimerRef.current);
+			}
+			wheelEndTimerRef.current = window.setTimeout(() => {
+				setSmoothZoom(true);
+				wheelEndTimerRef.current = null;
+			}, 150);
+		}
+
+		el.addEventListener('wheel', handleWheel, { passive: false });
+		return () => {
+			el.removeEventListener('wheel', handleWheel);
+			if (wheelEndTimerRef.current !== null) {
+				window.clearTimeout(wheelEndTimerRef.current);
+				wheelEndTimerRef.current = null;
+			}
+		};
+	}, []);
+
+	/* ------------------------------------------------------------------ *
+	 * Pan (drag to move when zoomed in)                                   *
+	 * ------------------------------------------------------------------ *
+	 *
+	 * Only enabled when the image is zoomed past 1 — at fit or below, the
+	 * image is already centered and any pan would just push it off-screen
+	 * for no reason. So we automatically snap pan back to (0,0) whenever
+	 * zoom returns to ≤1 (via fit, zoom-out buttons, or wheel-out).
+	 *
+	 * Mouse pipeline:
+	 *   1. mousedown on <main>     → record start (cursor + current pan)
+	 *   2. mousemove on window     → set pan = start.pan + (cursor delta)
+	 *   3. mouseup on window       → end drag
+	 *
+	 * mousemove/up are on window (not main) so the drag continues if the
+	 * cursor slips outside the canvas during the gesture — same pattern
+	 * the compare slider uses.
+	 *
+	 * dragStartRef holds the snapshot so we don't have to thread pan
+	 * through the mousemove handler's closure on every render.
+	 */
+
+	const dragStartRef = useRef<{
+		cursorX: number;
+		cursorY: number;
+		panX: number;
+		panY: number;
+	} | null>(null);
+
+	// Snap pan home whenever zoom drops to fit-or-below — there's no
+	// hidden area to reveal at that scale, so any lingering pan would
+	// just shift the centered image asymmetrically.
+	useEffect(() => {
+		if (zoom <= 1) setPan({ x: 0, y: 0 });
+	}, [zoom]);
+
+	const canPan = zoom > 1 && !!original && !compareActive;
+
+	const handleCanvasMouseDown = useCallback(
+		(e: React.MouseEvent<HTMLElement>) => {
+			if (!canPan) return;
+			if (e.button !== 0) return; // primary button only
+			e.preventDefault(); // suppress native text-selection drag
+			dragStartRef.current = {
+				cursorX: e.clientX,
+				cursorY: e.clientY,
+				panX: pan.x,
+				panY: pan.y,
+			};
+			setIsPanning(true);
+		},
+		[canPan, pan.x, pan.y],
+	);
+
+	useEffect(() => {
+		if (!isPanning) return;
+
+		function onMouseMove(e: MouseEvent) {
+			const start = dragStartRef.current;
+			if (!start) return;
+			setPan({
+				x: start.panX + (e.clientX - start.cursorX),
+				y: start.panY + (e.clientY - start.cursorY),
+			});
+		}
+
+		function onMouseUp() {
+			setIsPanning(false);
+			dragStartRef.current = null;
+		}
+
+		window.addEventListener('mousemove', onMouseMove);
+		window.addEventListener('mouseup', onMouseUp);
+		return () => {
+			window.removeEventListener('mousemove', onMouseMove);
+			window.removeEventListener('mouseup', onMouseUp);
+		};
+	}, [isPanning]);
 
 	/* ------------------------------------------------------------------ *
 	 * Derived view state                                                  *
@@ -460,7 +634,58 @@ export default function App() {
 	const afterHeight = result?.height ?? original?.height ?? 0;
 
 	return (
-		<div className="relative flex h-screen w-screen overflow-hidden bg-[var(--color-canvas)]">
+		<div className="relative h-screen w-screen overflow-hidden bg-[var(--color-canvas)]">
+			{/*
+			 * Canvas viewport — fills the entire viewport so the image has
+			 * maximum real estate. The side panels float ON TOP of it
+			 * (z-10), not next to it, so the image can extend the full
+			 * width and even visually under the panels when zoomed in —
+			 * the user can pan to reveal anything hidden behind a card.
+			 *
+			 *   absolute inset-0  fill viewport edge to edge
+			 *   overflow-hidden   clip the scaled image at viewport bounds
+			 *                     (kept from previous fix — without this,
+			 *                     a heavily-zoomed image would paint outside
+			 *                     the page and the browser would force a
+			 *                     scrollbar)
+			 *   ref               hosts the non-passive wheel listener
+			 *   onMouseDown       starts a pan-drag when canPan is true
+			 *   cursor            grab when ready to pan, grabbing while
+			 *                     actively dragging
+			 */}
+			<main
+				ref={mainRef}
+				onMouseDown={handleCanvasMouseDown}
+				className={clsx(
+					'absolute inset-0 flex items-center justify-center overflow-hidden',
+					canPan && (isPanning ? 'cursor-grabbing' : 'cursor-grab'),
+				)}
+			>
+				{!original ? (
+					<DropZone onFile={handleFile} />
+				) : compareActive && result ? (
+					<CompareSlider
+						before={original}
+						after={result}
+						showCheckerAfter={tool === 'background'}
+						afterWidth={afterWidth}
+						afterHeight={afterHeight}
+					/>
+				) : (
+					<ImageViewer
+						image={result ?? original}
+						tool={tool}
+						zoom={zoom}
+						pan={pan}
+						smoothZoom={smoothZoom && !isPanning}
+						processing={isProcessing}
+						processingStartedAt={isProcessing ? processingStartedAt : null}
+						error={error}
+					/>
+				)}
+			</main>
+
+			{/* Header overlay — z-20 stays above the side panels. */}
 			<Header
 				hasImage={!!original}
 				canUndo={canUndo}
@@ -475,72 +700,66 @@ export default function App() {
 				onDownload={downloadCurrent}
 			/>
 
-			<div className="flex w-full items-stretch pt-24 pb-24">
-				<div className="flex w-full items-start gap-6 px-6">
+			{/*
+			 * Sidebar — floating at top-left, below header.
+			 *
+			 * Positioned at top-24 (96px) so it clears the header's p-5 +
+			 * wordmark slot. left-6 (24px) matches the previous in-flow
+			 * px-6 horizontal rhythm.
+			 */}
+			<div className="pointer-events-none absolute top-24 left-6 z-10">
+				<div className="pointer-events-auto">
 					<Sidebar
 						activeTool={tool}
 						results={results}
 						onSelectTool={handleSelectTool}
 						onClearResult={handleClearResult}
 					/>
-
-					<main className="flex min-w-0 flex-1 items-center justify-center">
-						{!original ? (
-							<DropZone onFile={handleFile} />
-						) : compareActive && result ? (
-							<CompareSlider
-								before={original}
-								after={result}
-								showCheckerAfter={tool === 'background'}
-								afterWidth={afterWidth}
-								afterHeight={afterHeight}
-							/>
-						) : (
-							<ImageViewer
-								image={result ?? original}
-								tool={tool}
-								zoom={zoom}
-								processing={isProcessing}
-								processingStartedAt={isProcessing ? processingStartedAt : null}
-								error={error}
-							/>
-						)}
-					</main>
-
-					{original && tool === 'background' && (
-						<BackgroundPanel
-							processing={isProcessing}
-							processingStartedAt={isProcessing ? processingStartedAt : null}
-							result={background}
-							onRun={handleRunBackground}
-						/>
-					)}
-
-					{original && tool === 'upscale' && (
-						<UpscalePanel
-							image={original}
-							settings={upscaleSettings}
-							processing={isProcessing}
-							processingStartedAt={isProcessing ? processingStartedAt : null}
-							hasResult={!!upscaleResult}
-							onChangeSettings={setUpscaleSettings}
-							onRetry={handleRetryUpscale}
-						/>
-					)}
-
-					{original && tool === 'expand' && (
-						<ExpandPanel
-							image={original}
-							settings={expandSettings}
-							processing={isProcessing}
-							processingStartedAt={isProcessing ? processingStartedAt : null}
-							result={expandResult?.image ?? null}
-							onChangeSettings={setExpandSettings}
-							onGenerate={handleGenerateExpand}
-						/>
-					)}
 				</div>
 			</div>
+
+			{/*
+			 * Right tool panel — floating at top-right, below header.
+			 *
+			 * Conditional on `original` so the empty drop-zone state
+			 * doesn't show a panel for nothing.
+			 */}
+			{original && (
+				<div className="pointer-events-none absolute top-24 right-6 z-10">
+					<div className="pointer-events-auto">
+						{tool === 'background' && (
+							<BackgroundPanel
+								processing={isProcessing}
+								processingStartedAt={isProcessing ? processingStartedAt : null}
+								result={background}
+								onRun={handleRunBackground}
+							/>
+						)}
+						{tool === 'upscale' && (
+							<UpscalePanel
+								image={original}
+								settings={upscaleSettings}
+								processing={isProcessing}
+								processingStartedAt={isProcessing ? processingStartedAt : null}
+								hasResult={!!upscaleResult}
+								onChangeSettings={setUpscaleSettings}
+								onRetry={handleRetryUpscale}
+							/>
+						)}
+						{tool === 'expand' && (
+							<ExpandPanel
+								image={original}
+								settings={expandSettings}
+								processing={isProcessing}
+								processingStartedAt={isProcessing ? processingStartedAt : null}
+								result={expandResult?.image ?? null}
+								onChangeSettings={setExpandSettings}
+								onGenerate={handleGenerateExpand}
+							/>
+						)}
+					</div>
+				</div>
+			)}
 
 			<BottomControls
 				zoom={zoom}

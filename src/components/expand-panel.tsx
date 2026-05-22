@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { ChevronDown, Link2, Link2Off } from 'lucide-react';
+import { ChevronDown, Frame, Link2, Link2Off } from 'lucide-react';
 import { useId, useMemo } from 'react';
 import { formatElapsed, useElapsed } from '../hooks';
 import {
@@ -12,6 +12,8 @@ import {
 	parseRatio,
 	snapToNearestPreset,
 } from '../types';
+import { PanelHeader, PanelStatus, PrimaryCTA } from './background-panel';
+import { FieldLabel } from './upscale-panel';
 
 interface ExpandPanelProps {
 	image: ImageState;
@@ -30,35 +32,36 @@ const ELAPSED_VISIBLE_AFTER_MS = 3000;
 /** What the dropdown displays for each option. */
 const CHOICE_LABEL: Record<AspectRatioChoice, string> = {
 	custom: 'Custom',
-	'1:1': '1:1',
-	'16:9': '16:9',
-	'9:16': '9:16',
-	'3:2': '3:2',
-	'2:3': '2:3',
-	'4:3': '4:3',
-	'3:4': '3:4',
-	'4:5': '4:5',
-	'5:4': '5:4',
+	'1:1': 'Square — 1:1',
+	'16:9': 'Widescreen — 16:9',
+	'9:16': 'Portrait — 9:16',
+	'3:2': 'Photo — 3:2',
+	'2:3': 'Photo tall — 2:3',
+	'4:3': 'Classic — 4:3',
+	'3:4': 'Classic tall — 3:4',
+	'4:5': 'Social — 4:5',
+	'5:4': 'Social wide — 5:4',
 };
 
 const CHOICES: AspectRatioChoice[] = ['custom', ...ASPECT_RATIO_PRESETS];
 
 /**
- * Right-hand panel shown when the Expand tool is active.
+ * Right-hand panel for the Expand tool.
  *
- * The bria/expand-image model only accepts one of nine fixed aspect ratios,
- * not arbitrary canvas dimensions. We surface that honestly:
+ * The bria/expand-image model only accepts one of nine fixed aspect
+ * ratios, not arbitrary canvas dimensions. The panel surfaces that
+ * honestly:
  *
- *   - Picking a named preset (1:1, 16:9, …) auto-populates W and H with the
- *     dimensions the model will return for the current source.
- *   - Picking "Custom" lets the user type whatever W and H they want, and we
- *     snap to the nearest supported ratio at submit time. The hint label
- *     under the inputs shows which preset will actually be applied.
- *   - The chain icon between W and H controls proportional editing — only
- *     meaningful in Custom mode (preset modes hard-lock the ratio).
+ *   - Picking a named preset (1:1, 16:9, …) auto-populates W and H with
+ *     the dimensions the model will actually produce for the source.
+ *   - Picking "Custom" lets the user type any W and H. We snap to the
+ *     nearest supported ratio at submit time; the status pill shows
+ *     which preset will actually be applied ("Will apply 16:9").
+ *   - The chain icon between W and H controls proportional editing —
+ *     only meaningful in Custom mode (preset modes hard-lock the ratio).
  *
- * Generate is the primary action and never auto-fires — each call costs
- * Replicate credits, same as Upscale.
+ * Generate is the primary action; nothing auto-runs because each call
+ * costs Replicate credits.
  */
 export function ExpandPanel({
 	image,
@@ -76,8 +79,8 @@ export function ExpandPanel({
 	const hasResult = result != null;
 
 	/**
-	 * The preset that will actually be sent to the model. For Custom mode,
-	 * snap to the nearest enum based on the user's W/H ratio.
+	 * The preset that will actually be sent to the model. For Custom
+	 * mode, snap to the nearest enum based on the user's W/H ratio.
 	 */
 	const effectivePreset: AspectRatioPreset = useMemo(() => {
 		if (settings.choice === 'custom') {
@@ -140,12 +143,14 @@ export function ExpandPanel({
 
 	return (
 		<div
-			className="card-floating w-[260px] flex-shrink-0 p-4"
+			className="card-floating w-[260px] flex-shrink-0 p-5 animate-rise"
+			style={{ animationDelay: '160ms' }}
 			aria-label="Expand settings"
 		>
-			<h2 className="mb-3 text-[15px] font-semibold text-[var(--color-ink)]">Aspect Ratio</h2>
+			<PanelHeader Icon={Frame} title="Expand" subtitle="Grow the canvas" />
 
-			<div className="relative mb-3">
+			<FieldLabel>Aspect ratio</FieldLabel>
+			<div className="relative">
 				<select
 					name="aspect-ratio"
 					aria-label="Aspect ratio preset"
@@ -153,11 +158,11 @@ export function ExpandPanel({
 					disabled={processing}
 					onChange={(e) => selectChoice(e.target.value as AspectRatioChoice)}
 					className={clsx(
-						'h-11 w-full appearance-none rounded-lg pr-9 pl-3.5 text-left text-[14px] font-medium',
-						'bg-[var(--color-surface-hover)] text-[var(--color-ink)]',
-						'transition-[background-color,box-shadow] duration-150',
-						'hover:bg-[var(--color-surface-active)]',
-						'focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:outline-none',
+						'h-10 w-full appearance-none rounded-[10px] pr-9 pl-3 text-left text-[13px] font-medium',
+						'bg-[var(--color-surface-soft)] text-[var(--color-ink)]',
+						'transition-[background-color] duration-150',
+						'hover:bg-[var(--color-surface-press)]',
+						'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand-ring)]',
 						'disabled:opacity-50',
 					)}
 				>
@@ -173,7 +178,8 @@ export function ExpandPanel({
 				/>
 			</div>
 
-			<div className="mb-3 flex items-center gap-2">
+			<FieldLabel>Dimensions</FieldLabel>
+			<div className="flex items-center gap-1.5">
 				<DimensionInput
 					id={widthId}
 					label="W"
@@ -181,21 +187,21 @@ export function ExpandPanel({
 					disabled={processing}
 					onChange={updateWidth}
 				/>
-
 				<button
 					type="button"
 					onClick={toggleLinked}
 					disabled={processing}
 					aria-pressed={settings.linked}
 					aria-label={settings.linked ? 'Unlink width and height' : 'Link width and height'}
+					title={settings.linked ? 'Unlink' : 'Link'}
 					className={clsx(
-						'grid h-9 w-9 flex-shrink-0 place-items-center rounded-md',
+						'grid h-9 w-9 flex-shrink-0 place-items-center rounded-[8px]',
 						'transition-[background-color,color] duration-150',
-						'hover:bg-[var(--color-surface-hover)]',
-						'focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:outline-none',
+						'hover:bg-[var(--color-surface-soft)]',
+						'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand-ring)]',
 						'disabled:cursor-not-allowed disabled:opacity-50',
 						settings.linked
-							? 'text-[var(--color-ink)]'
+							? 'text-[var(--color-brand)]'
 							: 'text-[var(--color-ink-subtle)]',
 					)}
 				>
@@ -205,7 +211,6 @@ export function ExpandPanel({
 						<Link2Off className="h-4 w-4" strokeWidth={2} />
 					)}
 				</button>
-
 				<DimensionInput
 					id={heightId}
 					label="H"
@@ -215,60 +220,43 @@ export function ExpandPanel({
 				/>
 			</div>
 
-			<button
-				type="button"
-				onClick={() => onGenerate(effectivePreset)}
-				disabled={processing}
-				className={clsx(
-					'mb-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg text-[14px] font-semibold text-white',
-					'bg-[var(--color-brand)] hover:bg-[var(--color-brand-hover)]',
-					'transition-[background-color,scale] duration-150 active:scale-[0.98]',
-					'disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:bg-[var(--color-brand)]',
-					'focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-surface)] focus-visible:outline-none',
-				)}
-			>
-				{processing && <InlineSpinner />}
-				<span>{processing ? 'Expanding…' : hasResult ? 'Regenerate' : 'Generate'}</span>
+			<PrimaryCTA processing={processing} onClick={() => onGenerate(effectivePreset)}>
+				{processing ? 'Expanding…' : hasResult ? 'Run again' : 'Expand canvas'}
 				{showElapsed && (
-					<span className="ml-1 tabular-nums text-white/80">
-						{formatElapsed(elapsedMs)}
-					</span>
+					<span className="tabular-nums text-white/80">{formatElapsed(elapsedMs)}</span>
 				)}
-			</button>
+			</PrimaryCTA>
 
 			{/*
-			 * The model decides the actual output dimensions, so we don't
-			 * promise W×H up-front. We surface two pieces of honest info:
-			 *
-			 *   - In Custom mode, which preset we'll snap to.
-			 *   - Once we have a result, the real dimensions it came back at.
+			 * Status. Three states:
+			 *   - With a result: show actual output dimensions.
+			 *   - Custom mode with non-preset ratio: show the snap target.
+			 *   - Default: show the effective preset.
 			 */}
-			<div className="mt-1 text-center text-[12px] leading-snug">
+			<PanelStatus>
 				{hasResult ? (
-					<div className="text-[var(--color-ink-muted)]">
-						Output{' '}
-						<span className="tabular-nums font-semibold text-[var(--color-ink)]">
+					<>
+						<span className="text-[var(--color-ink-muted)]">Output</span>
+						<span className="tabular-nums font-medium text-[var(--color-ink)]">
 							{result.width}×{result.height}
 						</span>
-					</div>
+					</>
 				) : showSnapHint ? (
-					<div className="text-[var(--color-ink-muted)]">
-						Will apply{' '}
-						<span className="font-semibold text-[var(--color-ink)]">
+					<>
+						<span className="text-[var(--color-ink-muted)]">Will apply</span>
+						<span className="font-medium text-[var(--color-ink)]">
 							{effectivePreset}
-						</span>{' '}
-						aspect ratio
-					</div>
+						</span>
+					</>
 				) : (
-					<div className="text-[var(--color-ink-muted)]">
-						Target{' '}
-						<span className="font-semibold text-[var(--color-ink)]">
+					<>
+						<span className="text-[var(--color-ink-muted)]">Target</span>
+						<span className="font-medium text-[var(--color-ink)]">
 							{effectivePreset}
-						</span>{' '}
-						aspect ratio
-					</div>
+						</span>
+					</>
 				)}
-			</div>
+			</PanelStatus>
 		</div>
 	);
 }
@@ -286,26 +274,26 @@ interface DimensionInputProps {
 }
 
 /**
- * One of the two W/H number inputs. The leading label lives inside the
- * pill-shaped surface so the input feels like a single styled control.
+ * One of the two W/H number inputs. Leading caps-label lives inside the
+ * pill so the input feels like a single styled control.
  *
- * Uses `onBlur` to commit edits — typing into a controlled <input type="number">
- * with parseFloat-on-each-keystroke would clobber the user's value while
- * they're still typing the second digit.
+ * Uses `onChange` with NaN-guard rather than `onBlur` so the linked
+ * proportional update tracks the input value live.
  */
 function DimensionInput({ id, label, value, disabled, onChange }: DimensionInputProps) {
 	return (
 		<label
 			htmlFor={id}
 			className={clsx(
-				'flex h-9 flex-1 items-center gap-2 rounded-md px-2.5',
-				'bg-[var(--color-surface-hover)]',
-				'focus-within:ring-2 focus-within:ring-[var(--color-brand)]',
+				'flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-[8px] px-2.5',
+				'bg-[var(--color-surface-soft)]',
+				'transition-[background-color] duration-150',
+				'focus-within:ring-2 focus-within:ring-[var(--color-brand-ring)]',
 				disabled && 'opacity-50',
 			)}
 		>
 			<span
-				className="text-[12px] font-medium text-[var(--color-ink-muted)]"
+				className="text-[10.5px] font-medium uppercase tracking-[0.05em] text-[var(--color-ink-subtle)]"
 				aria-hidden
 			>
 				{label}
@@ -334,38 +322,6 @@ function DimensionInput({ id, label, value, disabled, onChange }: DimensionInput
 	);
 }
 
-function InlineSpinner() {
-	return (
-		<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-			<circle
-				cx="7"
-				cy="7"
-				r="5.5"
-				fill="none"
-				stroke="currentColor"
-				strokeOpacity="0.3"
-				strokeWidth="1.5"
-			/>
-			<path
-				d="M12.5 7a5.5 5.5 0 0 0-5.5-5.5"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="1.5"
-				strokeLinecap="round"
-			>
-				<animateTransform
-					attributeName="transform"
-					type="rotate"
-					from="0 7 7"
-					to="360 7 7"
-					dur="0.9s"
-					repeatCount="indefinite"
-				/>
-			</path>
-		</svg>
-	);
-}
-
 /* ──────────────────────────────────────────────────────────────────────── *
  * Helpers                                                                   *
  * ──────────────────────────────────────────────────────────────────────── */
@@ -377,9 +333,10 @@ function clampDimension(value: number): number {
 }
 
 /**
- * True when the typed W:H *is* already the given preset (within 0.5% tolerance).
- * Used to decide whether to show the "will apply" hint — if the user's typed
- * dimensions exactly match the snap target, no hint needed.
+ * True when the typed W:H *is* already the given preset (within 0.5%
+ * tolerance). Used to decide whether to show the "will apply" hint — if
+ * the user's typed dimensions exactly match the snap target, no hint
+ * needed.
  */
 function presetMatchesRatio(preset: AspectRatioPreset, width: number, height: number): boolean {
 	if (width <= 0 || height <= 0) return false;

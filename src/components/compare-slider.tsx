@@ -12,12 +12,14 @@ interface CompareSliderProps {
 }
 
 /**
- * Before / after slider used when "Compare" is toggled on. The "before" image
- * is the original upload; the "after" image is the Worker's processed
- * result, layered on top and clipped to the right of the divider.
+ * Before / after slider used when "Compare" is toggled on. The "before"
+ * image is the original upload; the "after" image is the Worker's
+ * processed result, layered on top and clipped to the right of the
+ * divider.
  *
- * Pointer + keyboard driven: ← / → nudges by 2% (Shift = 10%). PointerCapture
- * keeps drags responsive even when the cursor leaves the element.
+ * Pointer + keyboard driven: ← / → nudges by 2% (Shift = 10%).
+ * PointerCapture keeps drags responsive even when the cursor leaves the
+ * element.
  */
 export function CompareSlider({
 	before,
@@ -83,10 +85,10 @@ export function CompareSlider({
 			onPointerMove={onPointerMove}
 			onPointerUp={onPointerUp}
 			onPointerCancel={onPointerUp}
-			className="relative cursor-ew-resize overflow-hidden rounded-lg image-outline select-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-4 focus-visible:ring-offset-[var(--color-canvas)] focus-visible:outline-none"
+			className="image-outline relative cursor-ew-resize overflow-hidden rounded-[12px] select-none animate-rise focus-visible:ring-2 focus-visible:ring-[var(--color-brand-ring)] focus-visible:ring-offset-4 focus-visible:ring-offset-[var(--color-canvas)] focus-visible:outline-none"
 			style={{
 				maxWidth: `min(${before.width}px, 60vw)`,
-				maxHeight: 'min(70vh, 800px)',
+				maxHeight: 'min(72vh, 820px)',
 			}}
 		>
 			{/* Before (full image, base layer). */}
@@ -95,7 +97,7 @@ export function CompareSlider({
 				alt={`${before.name} before`}
 				draggable={false}
 				className="block h-auto w-full select-none"
-				style={{ maxHeight: 'min(70vh, 800px)' }}
+				style={{ maxHeight: 'min(72vh, 820px)' }}
 			/>
 
 			{/* After (clipped to the portion right of the divider). */}
@@ -120,7 +122,7 @@ export function CompareSlider({
 
 			{/* Divider line + handle. */}
 			<div
-				className="pointer-events-none absolute inset-y-0 w-px bg-white/90"
+				className="pointer-events-none absolute inset-y-0 w-px bg-white/95"
 				style={{ left: `${position}%`, boxShadow: '0 0 0 1px rgba(0, 0, 0, 0.08)' }}
 				aria-hidden
 			>
@@ -132,23 +134,23 @@ export function CompareSlider({
 						borderRadius: 9999,
 						background: 'white',
 						boxShadow:
-							'0 1px 2px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.12)',
+							'0 0 0 1px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.12)',
 						display: 'grid',
 						placeItems: 'center',
 					}}
 				>
-					<svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+					<svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden>
 						<path
 							d="M4.5 4L1.5 7L4.5 10"
-							stroke="currentColor"
-							strokeWidth="1.5"
+							stroke="var(--color-ink)"
+							strokeWidth="1.75"
 							strokeLinecap="round"
 							strokeLinejoin="round"
 						/>
 						<path
 							d="M9.5 4L12.5 7L9.5 10"
-							stroke="currentColor"
-							strokeWidth="1.5"
+							stroke="var(--color-ink)"
+							strokeWidth="1.75"
 							strokeLinecap="round"
 							strokeLinejoin="round"
 						/>
@@ -156,7 +158,7 @@ export function CompareSlider({
 				</div>
 			</div>
 
-			{/* Corner labels with tabular nums so digits don't shift. */}
+			{/* Corner labels — ink fill, tabular dimensions. */}
 			<DimensionLabel
 				className="absolute bottom-3 left-3"
 				label="Before"
@@ -173,6 +175,10 @@ export function CompareSlider({
 	);
 }
 
+/**
+ * Pill label used at the corners of the slider. Ink fill at high alpha
+ * with tabular nums so the digits don't shift as compare position changes.
+ */
 function DimensionLabel({
 	className,
 	label,
@@ -186,7 +192,8 @@ function DimensionLabel({
 }) {
 	return (
 		<div
-			className={`${className ?? ''} flex items-center gap-2 rounded-md bg-black/65 px-2.5 py-1 text-[12px] text-white backdrop-blur-sm`}
+			className={`${className ?? ''} flex items-center gap-2 rounded-[8px] px-2.5 py-1 text-[11.5px] text-white backdrop-blur-md`}
+			style={{ backgroundColor: 'rgba(10, 10, 10, 0.82)' }}
 		>
 			<span className="font-medium">{label}</span>
 			<span className="tabular-nums text-white/75">

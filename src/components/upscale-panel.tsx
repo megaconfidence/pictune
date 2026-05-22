@@ -1,7 +1,8 @@
 import clsx from 'clsx';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Sparkles } from 'lucide-react';
 import { formatElapsed, useElapsed } from '../hooks';
 import type { ImageState, UpscaleSettings } from '../types';
+import { PanelHeader, PanelStatus, PrimaryCTA } from './background-panel';
 
 interface UpscalePanelProps {
 	image: ImageState;
@@ -18,17 +19,17 @@ interface UpscalePanelProps {
 const ELAPSED_VISIBLE_AFTER_MS = 3000;
 
 /**
- * Right-hand panel shown when the Upscale tool is active.
+ * Right-hand panel for the Upscale tool.
  *
- *   - Title "Upscale"
- *   - Fast / Quality dropdown (visual only — we mock with a styled <select>)
- *   - 2x / 4x segmented toggle
- *   - Full-width "Retry" button. Doubles as the loading affordance while a
- *     prediction is in flight — disabled, label changes to "Upscaling…".
- *   - Dimensions row: original → upscaled, both tabular-nums
+ *   - Fast / Quality dropdown (faithful vs add-detail).
+ *   - 2× / 4× segmented toggle on a soft-gray track.
+ *   - Teal CTA. Doubles as the loading affordance — disabled, label
+ *     changes to "Upscaling…" with elapsed counter once it crosses 3s.
+ *   - Status pill: source → upscaled dimensions, tabular nums so the
+ *     digits never shift between runs.
  *
- * Changing the dropdown or factor does NOT auto-run — by design, because
- * each call costs real money. The user opts in by clicking Retry.
+ * Changing the dropdown or factor does NOT auto-run — by design, each
+ * call costs Replicate credits. The user opts in via the CTA.
  */
 export function UpscalePanel({
 	image,
@@ -46,12 +47,14 @@ export function UpscalePanel({
 
 	return (
 		<div
-			className="card-floating w-[260px] flex-shrink-0 p-4"
+			className="card-floating w-[260px] flex-shrink-0 p-5 animate-rise"
+			style={{ animationDelay: '160ms' }}
 			aria-label="Upscale settings"
 		>
-			<h2 className="mb-3 text-[15px] font-semibold text-[var(--color-ink)]">Upscale</h2>
+			<PanelHeader Icon={Sparkles} title="Upscale" subtitle="Sharpen and enlarge" />
 
-			<div className="relative mb-2">
+			<FieldLabel>Mode</FieldLabel>
+			<div className="relative">
 				<select
 					name="upscale-mode"
 					aria-label="Upscale mode"
@@ -64,16 +67,16 @@ export function UpscalePanel({
 						})
 					}
 					className={clsx(
-						'h-11 w-full appearance-none rounded-lg pr-9 pl-3.5 text-left text-[14px] font-medium',
-						'bg-[var(--color-surface-hover)] text-[var(--color-ink)]',
-						'transition-[background-color,box-shadow] duration-150',
-						'hover:bg-[var(--color-surface-active)]',
-						'focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:outline-none',
+						'h-10 w-full appearance-none rounded-[10px] pr-9 pl-3 text-left text-[13px] font-medium',
+						'bg-[var(--color-surface-soft)] text-[var(--color-ink)]',
+						'transition-[background-color] duration-150',
+						'hover:bg-[var(--color-surface-press)]',
+						'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand-ring)]',
 						'disabled:opacity-50',
 					)}
 				>
-					<option value="fast">Fast Upscale</option>
-					<option value="quality">Quality Upscale</option>
+					<option value="fast">Fast — keep it faithful</option>
+					<option value="quality">Quality — add detail</option>
 				</select>
 				<ChevronDown
 					className="pointer-events-none absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 text-[var(--color-ink-muted)]"
@@ -81,10 +84,11 @@ export function UpscalePanel({
 				/>
 			</div>
 
+			<FieldLabel>Factor</FieldLabel>
 			<div
 				role="radiogroup"
 				aria-label="Upscale factor"
-				className="mb-3 grid grid-cols-2 gap-0.5 rounded-lg bg-[var(--color-surface-hover)] p-0.5"
+				className="grid grid-cols-2 gap-0.5 rounded-[10px] bg-[var(--color-surface-soft)] p-0.5"
 			>
 				{([2, 4] as const).map((factor) => {
 					const active = settings.factor === factor;
@@ -96,52 +100,37 @@ export function UpscalePanel({
 							disabled={processing}
 							onClick={() => onChangeSettings({ ...settings, factor })}
 							className={clsx(
-								'relative h-9 rounded-md text-[14px] font-semibold transition-[background-color,color,box-shadow,scale] duration-150',
-								'ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.97]',
+								'relative h-9 rounded-[8px] text-[13px] font-medium',
+								'transition-[background-color,color,box-shadow,scale] duration-200 ease-[cubic-bezier(0.2,0,0,1)] active:scale-[0.97]',
 								'disabled:cursor-not-allowed disabled:opacity-60',
 								active
-									? 'bg-white text-[var(--color-ink)] shadow-[0_1px_2px_rgba(0,0,0,0.06),0_1px_3px_rgba(0,0,0,0.04)]'
+									? 'bg-white text-[var(--color-ink)] shadow-[0_0_0_1px_rgba(0,0,0,0.05),0_1px_2px_rgba(0,0,0,0.04)]'
 									: 'text-[var(--color-ink-muted)] hover:text-[var(--color-ink)]',
 							)}
 						>
-							{factor}x
+							{factor}×
 						</button>
 					);
 				})}
 			</div>
 
-			<button
-				onClick={onRetry}
-				disabled={processing}
-				className={clsx(
-					'mb-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg text-[14px] font-medium',
-					'bg-[var(--color-surface-hover)] text-[var(--color-ink)]',
-					'transition-[background-color,scale] duration-150 active:scale-[0.98]',
-					'hover:bg-[var(--color-surface-active)]',
-					'disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:bg-[var(--color-surface-hover)]',
-					'focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:outline-none',
-				)}
-			>
-				{processing && <InlineSpinner />}
-				<span>{processing ? 'Upscaling…' : hasResult ? 'Retry' : 'Run upscale'}</span>
+			<PrimaryCTA processing={processing} onClick={onRetry}>
+				{processing ? 'Upscaling…' : hasResult ? 'Run again' : 'Upscale'}
 				{showElapsed && (
-					<span className="tabular-nums text-[var(--color-ink-muted)]">
-						{formatElapsed(elapsedMs)}
-					</span>
+					<span className="tabular-nums text-white/80">{formatElapsed(elapsedMs)}</span>
 				)}
-			</button>
+			</PrimaryCTA>
 
-			{/* Dimensions: 1200×1200 → 2400×2400 */}
-			<div className="flex items-center justify-center gap-2 text-[13px]">
+			<PanelStatus>
 				<span className="tabular-nums text-[var(--color-ink-muted)]">
 					{image.width}×{image.height}
 				</span>
 				<svg
-					width="16"
-					height="16"
+					width="14"
+					height="14"
 					viewBox="0 0 16 16"
 					aria-hidden
-					className="text-[var(--color-ink-muted)]"
+					className="text-[var(--color-ink-subtle)]"
 				>
 					<path
 						d="M3 8H13M13 8L9 4M13 8L9 12"
@@ -151,42 +140,22 @@ export function UpscalePanel({
 						strokeLinejoin="round"
 					/>
 				</svg>
-				<span className="tabular-nums font-semibold text-[var(--color-ink)]">
+				<span className="tabular-nums font-medium text-[var(--color-ink)]">
 					{upscaledWidth}×{upscaledHeight}
 				</span>
-			</div>
+			</PanelStatus>
 		</div>
 	);
 }
 
-function InlineSpinner() {
+/**
+ * Section label above each field. Small caps + wide tracking gives a
+ * quiet hierarchy without taking up much space.
+ */
+export function FieldLabel({ children }: { children: React.ReactNode }) {
 	return (
-		<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
-			<circle
-				cx="7"
-				cy="7"
-				r="5.5"
-				fill="none"
-				stroke="currentColor"
-				strokeOpacity="0.18"
-				strokeWidth="1.5"
-			/>
-			<path
-				d="M12.5 7a5.5 5.5 0 0 0-5.5-5.5"
-				fill="none"
-				stroke="currentColor"
-				strokeWidth="1.5"
-				strokeLinecap="round"
-			>
-				<animateTransform
-					attributeName="transform"
-					type="rotate"
-					from="0 7 7"
-					to="360 7 7"
-					dur="0.9s"
-					repeatCount="indefinite"
-				/>
-			</path>
-		</svg>
+		<p className="mt-4 mb-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-[var(--color-ink-subtle)]">
+			{children}
+		</p>
 	);
 }

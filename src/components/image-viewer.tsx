@@ -6,6 +6,19 @@ interface ImageViewerProps {
 	image: ImageState;
 	tool: Tool;
 	zoom: number;
+	/**
+	 * Screen-pixel translation applied to the image. Combined with
+	 * `zoom` as `translate(...) scale(...)` so the translate maps 1:1 to
+	 * screen pixels at any zoom level.
+	 */
+	pan: { x: number; y: number };
+	/**
+	 * Whether to animate zoom changes. False while a wheel/pinch gesture
+	 * or a pan-drag is in progress so the image tracks the input 1:1;
+	 * true for button clicks (and ~150ms after the wheel stops) so they
+	 * animate.
+	 */
+	smoothZoom: boolean;
 	processing: boolean;
 	/** Timestamp (ms since epoch) of when the current job started, or null. */
 	processingStartedAt: number | null;
@@ -16,25 +29,27 @@ interface ImageViewerProps {
 const ELAPSED_VISIBLE_AFTER_MS = 3000;
 
 /**
- * Single-image preview shown after a file is uploaded and the user is NOT in
- * compare mode.
+ * Single-image preview shown after a file is uploaded and the user is NOT
+ * in compare mode.
  *
  * Per-tool rendering:
- *   - background: image floats on a checkerboard pattern. When the processed
- *     image has loaded, the cat (etc.) is on transparent bg so the checker
- *     shows through where the original background used to be.
- *   - expand / upscale: image rendered as-is on the canvas background.
+ *   - background: image floats on a subtle checkerboard. When the
+ *     processed image has loaded, the subject sits on transparent so
+ *     the checker shows through where the background used to be.
+ *   - expand / upscale: image renders on the white canvas as-is.
  *
  * Overlays:
- *   - When the active tool is processing, we dim the image and show a small
- *     animated indicator.
- *   - When the active tool has errored, we show a one-line message anchored
- *     to the bottom of the image so the user can still see what they've got.
+ *   - While processing, the image dims and a white pill at the center
+ *     reports the action + elapsed time (after 3s).
+ *   - On error, a one-line teal pill anchored to the bottom of the
+ *     image surfaces the message — visible without pushing the image.
  */
 export function ImageViewer({
 	image,
 	tool,
 	zoom,
+	pan,
+	smoothZoom,
 	processing,
 	processingStartedAt,
 	error,
@@ -42,17 +57,31 @@ export function ImageViewer({
 	const showChecker = tool === 'background';
 
 	return (
-		<div className="relative grid place-items-center">
+		<div className="relative grid place-items-center animate-rise">
 			<div
 				className={clsx(
-					'relative overflow-hidden rounded-lg image-outline',
+					'image-outline relative overflow-hidden rounded-[12px]',
 					showChecker && 'bg-checker',
 				)}
 				style={{
-					maxWidth: `min(${image.width}px, 60vw)`,
-					transform: `scale(${zoom})`,
+					// Bigger max footprint than the old 60vw / 72vh — the
+					// side panels are floating overlays now so the image
+					// is free to use almost the full canvas. We still
+					// hold back ~4vw / 8vh so a fit-zoomed image doesn't
+					// run completely under the floating cards.
+					maxWidth: `min(${image.width}px, 92vw)`,
+					// translate AFTER scale (right-most function runs
+					// first in CSS transforms): that way pan.x maps to
+					// screen pixels 1:1 regardless of zoom.
+					transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
 					transformOrigin: 'center center',
-					transition: 'transform 200ms cubic-bezier(0.2, 0, 0, 1)',
+					// Only ease for discrete (button) zoom changes. During
+					// continuous wheel/pinch input or active drag, the
+					// parent flips this off so the scale/translate track
+					// the gesture without lag.
+					transition: smoothZoom
+						? 'transform 240ms cubic-bezier(0.2, 0, 0, 1)'
+						: 'none',
 				}}
 			>
 				<img
@@ -60,11 +89,12 @@ export function ImageViewer({
 					alt={image.name}
 					draggable={false}
 					className={clsx(
-						'block h-auto w-full select-none transition-opacity duration-200',
-						processing && 'opacity-40',
+						'block h-auto w-full select-none',
+						'transition-opacity duration-300',
+						processing && 'opacity-35',
 					)}
 					style={{
-						maxHeight: 'min(70vh, 800px)',
+						maxHeight: 'min(84vh, 980px)',
 						width: 'auto',
 						maxWidth: '100%',
 					}}
@@ -82,7 +112,7 @@ export function ImageViewer({
 
 				{error && !processing && (
 					<div className="pointer-events-none absolute inset-x-3 bottom-3">
-						<div className="rounded-md bg-red-600/95 px-3 py-2 text-[12.5px] leading-snug font-medium text-white shadow-[0_2px_8px_rgba(0,0,0,0.18)]">
+						<div className="rounded-[10px] bg-[var(--color-ink)] px-3.5 py-2 text-[12.5px] leading-snug font-medium text-white shadow-[0_2px_10px_-2px_rgba(0,0,0,0.2)]">
 							{error}
 						</div>
 					</div>
@@ -92,6 +122,11 @@ export function ImageViewer({
 	);
 }
 
+/**
+ * Floating status pill while a tool is running. White surface so it
+ * remains legible regardless of what's behind it (canvas, dimmed image,
+ * or transparent checkerboard).
+ */
 function ProcessingBadge({ tool, startedAt }: { tool: Tool; startedAt: number | null }) {
 	const elapsedMs = useElapsed(startedAt);
 	const showElapsed = elapsedMs >= ELAPSED_VISIBLE_AFTER_MS;
@@ -104,7 +139,7 @@ function ProcessingBadge({ tool, startedAt }: { tool: Tool; startedAt: number | 
 					? 'Expanding…'
 					: 'Processing…';
 	return (
-		<div className="flex items-center gap-2.5 rounded-full bg-white px-4 py-2 text-[13px] font-medium text-[var(--color-ink)] shadow-[0_2px_4px_rgba(0,0,0,0.08),0_8px_24px_rgba(0,0,0,0.08)]">
+		<div className="flex items-center gap-2.5 rounded-full bg-white px-4 py-2 text-[13px] font-medium text-[var(--color-ink)] shadow-[0_0_0_1px_rgba(0,0,0,0.05),0_2px_4px_rgba(0,0,0,0.06),0_8px_24px_rgba(0,0,0,0.08)]">
 			<Spinner />
 			<span>{label}</span>
 			{showElapsed && (
@@ -116,6 +151,10 @@ function ProcessingBadge({ tool, startedAt }: { tool: Tool; startedAt: number | 
 	);
 }
 
+/**
+ * Teal-stroked progress spinner. Inline SVG so the colors hit exact
+ * brand values regardless of the parent's `currentColor`.
+ */
 function Spinner() {
 	return (
 		<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
@@ -124,15 +163,14 @@ function Spinner() {
 				cy="7"
 				r="5.5"
 				fill="none"
-				stroke="currentColor"
-				strokeOpacity="0.15"
+				stroke="var(--color-ink-faint)"
 				strokeWidth="1.5"
 			/>
 			<path
 				d="M12.5 7a5.5 5.5 0 0 0-5.5-5.5"
 				fill="none"
-				stroke="currentColor"
-				strokeWidth="1.5"
+				stroke="var(--color-brand)"
+				strokeWidth="1.75"
 				strokeLinecap="round"
 			>
 				<animateTransform

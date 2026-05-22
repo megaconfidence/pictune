@@ -1,32 +1,51 @@
 @import 'tailwindcss';
 
+/* ──────────────────────────────────────────────────────────────────────── *
+ * Pictune — minimal design system                                           *
+ * ──────────────────────────────────────────────────────────────────────── *
+ *
+ * Pure white surfaces, neutral grays, one muted-teal accent. Geist handles
+ * every text role — no display serif, no font pairing. The point is to get
+ * out of the way of the image: minimal chrome, generous whitespace, quiet
+ * controls.
+ *
+ * ──────────────────────────────────────────────────────────────────────── */
+
 @theme {
 	--font-sans:
-		'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+		'Geist', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
 		'Helvetica Neue', Arial, sans-serif;
 
-	/* Surface palette tuned to match the design — warm stone/zinc neutrals. */
-	--color-canvas: #f5f5f4;
+	/* Surfaces ────────────────────────────────────────────────────────── */
+	--color-canvas: #ffffff; /* pure white */
+	--color-canvas-deep: #fafafa; /* very subtle elevation */
 	--color-surface: #ffffff;
-	--color-surface-hover: #f4f4f5;
-	--color-surface-active: #e4e4e7;
+	--color-surface-soft: #f5f5f5; /* hover */
+	--color-surface-press: #e5e5e5; /* active / pressed */
 
-	--color-ink: #18181b;
-	--color-ink-muted: #71717a;
-	--color-ink-subtle: #a1a1aa;
+	/* Ink ─────────────────────────────────────────────────────────────── */
+	--color-ink: #0a0a0a;
+	--color-ink-muted: #737373;
+	--color-ink-subtle: #a3a3a3;
+	--color-ink-faint: #d4d4d4;
 
-	--color-line: #e4e4e7;
-	--color-line-strong: #d4d4d8;
+	/* Lines ───────────────────────────────────────────────────────────── */
+	--color-line: #ededed;
+	--color-line-strong: #d4d4d4;
 
-	--color-brand: #2563eb;
-	--color-brand-hover: #1d4ed8;
+	/* Brand — muted teal ─────────────────────────────────────────────── */
+	--color-brand: #0e7c66;
+	--color-brand-hover: #0a6354;
+	--color-brand-press: #064a3f;
+	--color-brand-soft: #e8f3ef;
+	--color-brand-ring: rgba(14, 124, 102, 0.28);
 
-	/* Custom checkerboard for transparent backgrounds (subtle, like Figma). */
+	/* Checkerboard for transparent backgrounds */
 	--checker-light: #ffffff;
-	--checker-dark: #e7e5e4;
+	--checker-dark: #ededed;
 
-	/* Bezier matched to material spec — confident, no overshoot. */
-	--ease-out-soft: cubic-bezier(0.2, 0, 0, 1);
+	/* Motion ─────────────────────────────────────────────────────────── */
+	--ease-soft: cubic-bezier(0.2, 0, 0, 1);
 }
 
 @layer base {
@@ -44,62 +63,83 @@
 		background-color: var(--color-canvas);
 		color: var(--color-ink);
 		font-family: var(--font-sans);
+		font-feature-settings: 'cv11';
+		font-optical-sizing: auto;
 		-webkit-font-smoothing: antialiased;
 		-moz-osx-font-smoothing: grayscale;
 		text-rendering: optimizeLegibility;
-		font-feature-settings:
-			'cv11' on,
-			'ss01' on;
 	}
 
 	button {
 		font-family: inherit;
 	}
 
-	/* Tabular numerals on counters and dimensions so digits never shift. */
+	/* Wrap headings with balance, body with pretty (no orphans). */
+	h1,
+	h2,
+	h3 {
+		text-wrap: balance;
+	}
+	p {
+		text-wrap: pretty;
+	}
+
 	.tabular-nums {
 		font-variant-numeric: tabular-nums;
+	}
+
+	::selection {
+		background: var(--color-brand-soft);
+		color: var(--color-ink);
 	}
 }
 
 @layer components {
-	/* Checkerboard pattern used behind transparent images, matches the
-	   "background removed" preview in the designs. */
+	/* ────────────────────────────────────────────────────────────────── *
+	 * Cards — hairline-quiet, near-flat                                   *
+	 * Concentric radii: card (16px) + p-1.5 (6px) + inner radius 10px.    *
+	 * card-floating (20px) + p-2.5 (10px) + inner radius 10px.            *
+	 * ────────────────────────────────────────────────────────────────── */
+	.card {
+		background-color: var(--color-surface);
+		border-radius: 16px;
+		box-shadow:
+			0 0 0 1px rgba(0, 0, 0, 0.05),
+			0 1px 2px rgba(0, 0, 0, 0.03);
+	}
+
+	.card-floating {
+		background-color: var(--color-surface);
+		border-radius: 20px;
+		box-shadow:
+			0 0 0 1px rgba(0, 0, 0, 0.05),
+			0 1px 2px rgba(0, 0, 0, 0.03),
+			0 8px 24px -10px rgba(0, 0, 0, 0.06);
+	}
+
+	/* Image outline — black at low opacity, never tinted. */
+	.image-outline {
+		outline: 1px solid rgba(0, 0, 0, 0.08);
+		outline-offset: -1px;
+	}
+
+	/* Subtle checkerboard for transparent-background previews. */
 	.bg-checker {
 		background-image:
 			linear-gradient(45deg, var(--checker-dark) 25%, transparent 25%),
 			linear-gradient(-45deg, var(--checker-dark) 25%, transparent 25%),
 			linear-gradient(45deg, transparent 75%, var(--checker-dark) 75%),
 			linear-gradient(-45deg, transparent 75%, var(--checker-dark) 75%);
-		background-size: 20px 20px;
+		background-size: 16px 16px;
 		background-position:
 			0 0,
-			0 10px,
-			10px -10px,
-			-10px 0;
+			0 8px,
+			8px -8px,
+			-8px 0;
 		background-color: var(--checker-light);
 	}
 
-	/* Reusable elevated card shell — single subtle shadow, no border. */
-	.card {
-		background-color: var(--color-surface);
-		border-radius: 1rem; /* 16px / rounded-2xl */
-		box-shadow:
-			0 1px 2px -1px rgba(0, 0, 0, 0.06),
-			0 1px 3px 0 rgba(0, 0, 0, 0.04);
-	}
-
-	/* Slightly heavier shell used for the right-hand panels. */
-	.card-floating {
-		background-color: var(--color-surface);
-		border-radius: 1rem;
-		box-shadow:
-			0 1px 2px -1px rgba(0, 0, 0, 0.05),
-			0 2px 6px -2px rgba(0, 0, 0, 0.05),
-			0 8px 24px -8px rgba(0, 0, 0, 0.06);
-	}
-
-	/* Standard hit area helper — extends a small visible control to 40×40px. */
+	/* Standard hit area helper — extends small visible controls to 40×40px. */
 	.hit-40 {
 		position: relative;
 	}
@@ -112,12 +152,20 @@
 		height: 40px;
 	}
 
-	/* Subtle outline applied to user-uploaded images to keep edges from blending
-	   into the canvas background. Pure black at very low opacity. */
-	.image-outline {
-		outline: 1px solid rgba(0, 0, 0, 0.08);
-		outline-offset: -1px;
+	/* ────────────────────────────────────────────────────────────────── *
+	 * Enter animation — split + stagger, very subtle                       *
+	 * ────────────────────────────────────────────────────────────────── */
+	@keyframes rise {
+		from {
+			opacity: 0;
+			transform: translateY(6px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+	.animate-rise {
+		animation: rise 320ms var(--ease-soft) backwards;
 	}
 }
-
-/* Inter via system fonts is enough; we don't need a web font request for v1. */
