@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type {
 	AdminStats,
 	CountryStat,
-	HourlyBucket,
+	DailyBucket,
 	Outcome,
 	RecentEvent,
 	Tool,
@@ -20,9 +20,9 @@ import type {
  *
  *   2. Authenticated → usage dashboard. Auto-refreshes every 30s and
  *      exposes a manual refresh button. The passphrase lives in
- *      sessionStorage so a page refresh keeps the admin signed in (but
- *      closing the tab forgets it — admin passphrases shouldn't survive
- *      a browser quit).
+ *      localStorage so the admin stays signed in indefinitely — across
+ *      page refreshes AND browser restarts. It never expires on its own;
+ *      the only way it's cleared is an explicit Sign out or a server 401.
  *
  * If the server ever returns 401 mid-session (e.g. the operator rotated
  * the secret), we drop the cached passphrase and surface a "session
@@ -53,7 +53,7 @@ async function fetchStats(passphrase: string): Promise<AdminStats> {
 
 export default function AdminApp() {
 	const [passphrase, setPassphrase] = useState<string | null>(() =>
-		sessionStorage.getItem(STORAGE_KEY),
+		localStorage.getItem(STORAGE_KEY),
 	);
 	const [stats, setStats] = useState<AdminStats | null>(null);
 	const [loading, setLoading] = useState(false);
@@ -61,7 +61,7 @@ export default function AdminApp() {
 	const [expiredNotice, setExpiredNotice] = useState<string | null>(null);
 
 	const signOut = useCallback(() => {
-		sessionStorage.removeItem(STORAGE_KEY);
+		localStorage.removeItem(STORAGE_KEY);
 		setPassphrase(null);
 		setStats(null);
 		setError(null);
@@ -105,7 +105,7 @@ export default function AdminApp() {
 		setLoading(true);
 		try {
 			const next = await fetchStats(entered);
-			sessionStorage.setItem(STORAGE_KEY, entered);
+			localStorage.setItem(STORAGE_KEY, entered);
 			setPassphrase(entered);
 			setStats(next);
 		} catch (err) {
@@ -336,8 +336,8 @@ function Dashboard({
 
 function StatsView({ stats }: { stats: AdminStats }) {
 	const acceptedPct =
-		stats.totals.last_24h > 0
-			? Math.round((stats.by_outcome.accepted / stats.totals.last_24h) * 100)
+		stats.totals.all_time > 0
+			? Math.round((stats.by_outcome.accepted / stats.totals.all_time) * 100)
 			: 0;
 	return (
 		<>
@@ -351,8 +351,8 @@ function StatsView({ stats }: { stats: AdminStats }) {
 
 			{/* Activity chart */}
 			<div className="card-floating p-5">
-				<CardHeader title="Activity" subtitle="Hourly, last 24 hours" />
-				<HourlyChart buckets={stats.hourly} />
+				<CardHeader title="Activity" subtitle="Daily, all time" />
+				<DailyChart buckets={stats.daily} />
 			</div>
 
 			{/* Tool / outcome / country breakdowns. md collapses to 2-up, lg
@@ -362,7 +362,7 @@ function StatsView({ stats }: { stats: AdminStats }) {
 			<div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
 				<BreakdownCard
 					title="By tool"
-					subtitle="Last 24 hours"
+					subtitle="All time"
 					rows={[
 						{
 							label: 'Background',
@@ -383,7 +383,7 @@ function StatsView({ stats }: { stats: AdminStats }) {
 				/>
 				<BreakdownCard
 					title="By outcome"
-					subtitle="Last 24 hours"
+					subtitle="All time"
 					rows={[
 						{
 							label: 'Accepted',
@@ -414,7 +414,7 @@ function StatsView({ stats }: { stats: AdminStats }) {
 			{/* IPs + recent activity */}
 			<div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
 				<div className="lg:col-span-2">
-					<TopIpsCard count={stats.unique_ips_24h} top={stats.top_ips} />
+					<TopIpsCard count={stats.unique_ips} top={stats.top_ips} />
 				</div>
 				<div className="lg:col-span-3">
 					<RecentActivityCard events={stats.recent} />
@@ -531,7 +531,7 @@ function CountryBreakdownCard({ countries }: { countries: CountryStat[] }) {
 	return (
 		<BreakdownCard
 			title="By country"
-			subtitle="Last 24 hours"
+			subtitle="All time"
 			emptyMessage="No data yet."
 			rows={countries.map((c) => ({
 				label: countryLabel(c.country),
@@ -546,21 +546,31 @@ function CountryBreakdownCard({ countries }: { countries: CountryStat[] }) {
  * Hourly chart                                                              *
  * ──────────────────────────────────────────────────────────────────────── */
 
-function HourlyChart({ buckets }: { buckets: HourlyBucket[] }) {
+function DailyChart({ buckets }: { buckets: DailyBucket[] }) {
+	if (buckets.length === 0) {
+		return (
+			<p className="mt-4 text-[12.5px] text-[var(--color-ink-muted)]">
+				No activity recorded yet.
+			</p>
+		);
+	}
 	const max = Math.max(1, ...buckets.map((b) => b.count));
 	const lastIdx = buckets.length - 1;
+	// Many days compress the bars; drop the inter-bar gap once it would eat
+	// more space than the bars themselves so a long history stays legible.
+	const gap = buckets.length > 60 ? 'gap-px' : 'gap-[3px]';
 	return (
 		<div className="mt-4">
-			<div className="flex h-32 items-end gap-[3px]">
+			<div className={clsx('flex h-32 items-end', gap)}>
 				{buckets.map((bucket, i) => {
 					const heightPct = max > 0 ? (bucket.count / max) * 100 : 0;
 					const isLatest = i === lastIdx;
 					const empty = bucket.count === 0;
 					return (
 						<div
-							key={bucket.hour}
+							key={bucket.day}
 							className="group relative h-full flex-1"
-							title={`${formatChartHour(bucket.hour)} — ${formatCount(bucket.count)} ${
+							title={`${formatChartDay(bucket.day)} — ${formatCount(bucket.count)} ${
 								bucket.count === 1 ? 'request' : 'requests'
 							}`}
 						>
@@ -584,9 +594,11 @@ function HourlyChart({ buckets }: { buckets: HourlyBucket[] }) {
 				})}
 			</div>
 			<div className="mt-2 flex justify-between text-[10px] tabular-nums text-[var(--color-ink-subtle)]">
-				<span>24h ago</span>
-				<span>12h ago</span>
-				<span>Now</span>
+				<span>{formatChartDay(buckets[0].day)}</span>
+				{buckets.length >= 3 && (
+					<span>{formatChartDay(buckets[Math.floor(lastIdx / 2)].day)}</span>
+				)}
+				<span>Today</span>
 			</div>
 		</div>
 	);
@@ -599,7 +611,7 @@ function HourlyChart({ buckets }: { buckets: HourlyBucket[] }) {
 function TopIpsCard({ count, top }: { count: number; top: TopIp[] }) {
 	return (
 		<div className="card-floating p-5">
-			<CardHeader title="Unique IPs" subtitle="Last 24 hours" />
+			<CardHeader title="Unique IPs" subtitle="All time" />
 			<div className="mt-3 text-[30px] font-semibold leading-none tabular-nums text-[var(--color-ink)]">
 				{formatCount(count)}
 			</div>
@@ -630,7 +642,7 @@ function TopIpsCard({ count, top }: { count: number; top: TopIp[] }) {
 				</>
 			) : (
 				<p className="mt-6 text-[12.5px] text-[var(--color-ink-muted)]">
-					No activity in the last 24 hours.
+					No activity recorded yet.
 				</p>
 			)}
 		</div>
@@ -806,13 +818,12 @@ function formatAgo(ts: number, now: number): string {
 	return `${days}d ago`;
 }
 
-/** Format an hour-bucket timestamp for the chart tooltip. */
-function formatChartHour(ts: number): string {
+/** Format a day-bucket timestamp for the chart tooltip / axis ("Jun 5"). */
+function formatChartDay(ts: number): string {
 	const d = new Date(ts);
-	return d.toLocaleString([], {
-		hour: 'numeric',
-		minute: '2-digit',
-		hour12: true,
+	return d.toLocaleDateString([], {
+		month: 'short',
+		day: 'numeric',
 	});
 }
 

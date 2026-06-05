@@ -8,8 +8,11 @@
  * single-digit RPS in aggregate) a single DO sits comfortably under the
  * ~1k-writes-per-second-per-object ceiling.
  *
- * Storage shape: one row per request, append-only. Old rows are pruned to
- * `RETENTION_MS` on every log() call — cheap with the timestamp index.
+ * Storage shape: one row per request, append-only and never pruned. The
+ * dashboard reports all-time usage, so every event is retained for the life
+ * of the object. Rows are tiny (a timestamp, an IP, a 2-letter country code
+ * and two short enums), so a single SQLite DO stays comfortably within its
+ * storage budget at this app's scale for years.
  *
  * Why a DO instead of Workers Analytics Engine? Analytics Engine is the
  * "proper" tool here, but querying it requires a separate API token and an
@@ -17,9 +20,6 @@
  * handful of times a day, a SQLite DO is simpler and cheaper.
  */
 import { DurableObject } from 'cloudflare:workers';
-
-/** Keep events for this long. Older rows are pruned on each log() call. */
-const RETENTION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export type Tool = 'background' | 'upscale' | 'expand';
 
@@ -55,10 +55,10 @@ export interface TopIp {
 	last_seen: number;
 }
 
-/** One bucket in the 24-hour activity chart. */
-export interface HourlyBucket {
-	/** Bucket start, ms since epoch, aligned to the hour. */
-	hour: number;
+/** One bucket in the all-time daily activity chart. */
+export interface DailyBucket {
+	/** Bucket start, ms since epoch, aligned to the UTC day. */
+	day: number;
 	count: number;
 }
 
@@ -96,23 +96,23 @@ export interface AdminStats {
 		last_24h: number;
 		last_7d: number;
 	};
-	/** Per-tool counts within the last 24h. */
+	/** Per-tool counts, all-time. */
 	by_tool: Record<Tool, number>;
-	/** Per-outcome counts within the last 24h. */
+	/** Per-outcome counts, all-time. */
 	by_outcome: Record<Outcome, number>;
 	/**
-	 * Top countries by request count within the last 24h. Up to TOP_COUNTRIES
-	 * entries plus an "Other" bucket aggregating the rest. Sorted by count
+	 * Top countries by request count, all-time. Up to TOP_COUNTRIES entries
+	 * plus an "Other" bucket aggregating the rest. Sorted by count
 	 * descending, ties broken alphabetically for stable ordering across
 	 * refreshes.
 	 */
 	by_country: CountryStat[];
-	/** Distinct IPs seen in the last 24h. */
-	unique_ips_24h: number;
-	/** Top 10 IPs by request count in the last 24h. */
+	/** Distinct IPs seen all-time. */
+	unique_ips: number;
+	/** Top 10 IPs by request count, all-time. */
 	top_ips: TopIp[];
-	/** Exactly 24 buckets: one per hour, oldest first. */
-	hourly: HourlyBucket[];
+	/** One bucket per day from the first event through today, oldest first. */
+	daily: DailyBucket[];
 	/** Most recent 50 events, newest first. */
 	recent: RecentEvent[];
 }
@@ -125,7 +125,8 @@ type ToolCountRow = { tool: string; count: number };
 type OutcomeCountRow = { outcome: string; count: number };
 type CountryCountRow = { country: string | null; count: number };
 type TopIpRow = { ip: string; count: number; last_seen: number };
-type HourBucketRow = { hour: number; count: number };
+type DayBucketRow = { day: number; count: number };
+type MinTsRow = { min_ts: number | null };
 type EventRow = {
 	ts: number;
 	ip: string;
@@ -161,13 +162,10 @@ export class Analytics extends DurableObject<Env> {
 	}
 
 	/**
-	 * Append one event. Also opportunistically prunes anything older than
-	 * the retention window. The DELETE is cheap (covered by idx_events_ts)
-	 * and means an active admin doesn't need a separate cleanup cron.
+	 * Append one event. Events are kept indefinitely so the dashboard can
+	 * report all-time usage — there is no pruning step.
 	 */
 	async log(event: AnalyticsEvent): Promise<void> {
-		const cutoff = Date.now() - RETENTION_MS;
-		this.ctx.storage.sql.exec('DELETE FROM events WHERE ts < ?', cutoff);
 		this.ctx.storage.sql.exec(
 			'INSERT INTO events (ts, ip, country, tool, outcome) VALUES (?, ?, ?, ?, ?)',
 			event.ts,
@@ -199,12 +197,11 @@ export class Analytics extends DurableObject<Env> {
 				.one().count,
 		};
 
-		// Per-tool counts (last 24h). Initialise with zeros so the response
+		// Per-tool counts (all-time). Initialise with zeros so the response
 		// always has all three keys even when one tool has never been used.
 		const by_tool: Record<Tool, number> = { background: 0, upscale: 0, expand: 0 };
 		for (const row of sql.exec<ToolCountRow>(
-			'SELECT tool, COUNT(*) AS count FROM events WHERE ts >= ? GROUP BY tool',
-			dayCutoff,
+			'SELECT tool, COUNT(*) AS count FROM events GROUP BY tool',
 		)) {
 			if (isTool(row.tool)) by_tool[row.tool] = row.count;
 		}
@@ -216,8 +213,7 @@ export class Analytics extends DurableObject<Env> {
 			failed: 0,
 		};
 		for (const row of sql.exec<OutcomeCountRow>(
-			'SELECT outcome, COUNT(*) AS count FROM events WHERE ts >= ? GROUP BY outcome',
-			dayCutoff,
+			'SELECT outcome, COUNT(*) AS count FROM events GROUP BY outcome',
 		)) {
 			if (isOutcome(row.outcome)) by_outcome[row.outcome] = row.count;
 		}
@@ -229,9 +225,8 @@ export class Analytics extends DurableObject<Env> {
 		const allCountries: CountryStat[] = [];
 		for (const row of sql.exec<CountryCountRow>(
 			`SELECT country, COUNT(*) AS count
-			 FROM events WHERE ts >= ?
+			 FROM events
 			 GROUP BY country ORDER BY count DESC, country ASC`,
-			dayCutoff,
 		)) {
 			allCountries.push({ country: row.country ?? 'Unknown', count: row.count });
 		}
@@ -248,48 +243,47 @@ export class Analytics extends DurableObject<Env> {
 						},
 					];
 
-		const unique_ips_24h = sql
-			.exec<CountRow>(
-				'SELECT COUNT(DISTINCT ip) AS count FROM events WHERE ts >= ?',
-				dayCutoff,
-			)
+		const unique_ips = sql
+			.exec<CountRow>('SELECT COUNT(DISTINCT ip) AS count FROM events')
 			.one().count;
 
 		const top_ips: TopIp[] = [];
 		for (const row of sql.exec<TopIpRow>(
 			`SELECT ip, COUNT(*) AS count, MAX(ts) AS last_seen
-			 FROM events WHERE ts >= ?
+			 FROM events
 			 GROUP BY ip ORDER BY count DESC LIMIT 10`,
-			dayCutoff,
 		)) {
 			top_ips.push({ ip: row.ip, count: row.count, last_seen: row.last_seen });
 		}
 
-		// Hourly histogram. The newest bucket is the *current* (partial) hour
-		// so the rightmost bar always represents "now"; we walk 23 hours
-		// backwards from there. Materialising all 24 buckets — even empty
-		// ones — keeps the chart's x-axis stable across refreshes.
-		const newestBucket = Math.floor(now / HOUR_MS) * HOUR_MS;
-		const oldestBucket = newestBucket - 23 * HOUR_MS;
-		const hourMap = new Map<number, number>();
-		// HOUR_MS is interpolated into the SQL (rather than bound via ?) so
+		// Daily histogram, all-time: one bucket per UTC day from the first
+		// recorded event through today, with empty days materialised so the
+		// chart's x-axis has no gaps. The rightmost bucket is the current
+		// (partial) day so the last bar always represents "today".
+		//
+		// DAY_MS is interpolated into the SQL (rather than bound via ?) so
 		// SQLite parses it as an INTEGER literal. Bound JS numbers come
-		// through as REAL, which silently turns `ts / 3600000` into REAL
+		// through as REAL, which silently turns `ts / 86400000` into REAL
 		// division — every event then lands in its own float-keyed bucket
-		// because the multiply-back doesn't round to an exact hour. The
-		// value is a compile-time constant, so string interpolation is safe.
-		for (const row of sql.exec<HourBucketRow>(
-			`SELECT (ts / ${HOUR_MS}) * ${HOUR_MS} AS hour, COUNT(*) AS count
-			 FROM events WHERE ts >= ?
-			 GROUP BY hour ORDER BY hour ASC`,
-			oldestBucket,
-		)) {
-			hourMap.set(row.hour, row.count);
-		}
-		const hourly: HourlyBucket[] = [];
-		for (let i = 0; i < 24; i++) {
-			const hour = oldestBucket + i * HOUR_MS;
-			hourly.push({ hour, count: hourMap.get(hour) ?? 0 });
+		// because the multiply-back doesn't round to an exact day. The value
+		// is a compile-time constant, so string interpolation is safe.
+		const firstTs = sql
+			.exec<MinTsRow>('SELECT MIN(ts) AS min_ts FROM events')
+			.one().min_ts;
+		const daily: DailyBucket[] = [];
+		if (firstTs != null) {
+			const dayMap = new Map<number, number>();
+			for (const row of sql.exec<DayBucketRow>(
+				`SELECT (ts / ${DAY_MS}) * ${DAY_MS} AS day, COUNT(*) AS count
+				 FROM events GROUP BY day ORDER BY day ASC`,
+			)) {
+				dayMap.set(row.day, row.count);
+			}
+			const firstDay = Math.floor(firstTs / DAY_MS) * DAY_MS;
+			const today = Math.floor(now / DAY_MS) * DAY_MS;
+			for (let day = firstDay; day <= today; day += DAY_MS) {
+				daily.push({ day, count: dayMap.get(day) ?? 0 });
+			}
 		}
 
 		const recent: RecentEvent[] = [];
@@ -312,9 +306,9 @@ export class Analytics extends DurableObject<Env> {
 			by_tool,
 			by_outcome,
 			by_country,
-			unique_ips_24h,
+			unique_ips,
 			top_ips,
-			hourly,
+			daily,
 			recent,
 		};
 	}
