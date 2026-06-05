@@ -57,7 +57,7 @@ export function ImageViewer({
 	const showChecker = tool === 'background';
 
 	return (
-		<div className="relative grid place-items-center animate-rise">
+		<div className="animate-rise relative grid h-full max-h-full w-full max-w-full place-items-center">
 			<div
 				className={clsx(
 					'image-outline relative overflow-hidden rounded-[12px]',
@@ -70,6 +70,13 @@ export function ImageViewer({
 					// hold back ~4vw / 8vh so a fit-zoomed image doesn't
 					// run completely under the floating cards.
 					maxWidth: `min(${image.width}px, 92vw)`,
+					// Cap height to the parent's available height so the
+					// image always fits inside the canvas viewport. On
+					// mobile the canvas shrinks to whatever is left after
+					// the header / sidebar tabs / tool panel claim their
+					// space; on desktop the canvas fills the viewport so
+					// this just resolves to the full screen height.
+					maxHeight: '100%',
 					// translate AFTER scale (right-most function runs
 					// first in CSS transforms): that way pan.x maps to
 					// screen pixels 1:1 regardless of zoom.
@@ -89,15 +96,15 @@ export function ImageViewer({
 					alt={image.name}
 					draggable={false}
 					className={clsx(
-						'block h-auto w-full select-none',
+						'block h-auto max-h-full w-auto max-w-full select-none',
 						'transition-opacity duration-300',
 						processing && 'opacity-35',
 					)}
-					style={{
-						maxHeight: 'min(84vh, 980px)',
-						width: 'auto',
-						maxWidth: '100%',
-					}}
+					// Hard ceiling for very tall portrait images on
+					// desktop — keeps a 5000px upload from blowing past
+					// the 84vh / 980px sweet-spot the design assumes.
+					// Mobile relies on the max-h-full cascade above.
+					style={{ maxHeight: 'min(100%, 980px)' }}
 				/>
 
 				{processing && (

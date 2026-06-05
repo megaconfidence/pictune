@@ -109,7 +109,7 @@ export function DropZone({ onFile }: DropZoneProps) {
 				{dragOver ? 'Drop to upload' : 'Drop an image'}
 			</p>
 			<p className="mt-1 text-[13px] text-[var(--color-ink-muted)]">
-				or{' '}
+				paste, or{' '}
 				<span className="font-medium text-[var(--color-brand)] underline decoration-[var(--color-brand)]/30 underline-offset-[3px] transition-colors group-hover:decoration-[var(--color-brand)]">
 					browse
 				</span>{' '}

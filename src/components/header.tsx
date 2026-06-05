@@ -27,9 +27,13 @@ interface HeaderProps {
  *     history actions), divider, Compare toggle, Download. All buttons
  *     share one hairline card so the toolbar reads as a single object.
  *
- * Both corners are absolutely positioned with `pointer-events: none` on
- * the bar itself so they don't compete with the central canvas for
- * vertical space.
+ * Responsive behavior:
+ *   - Mobile (< md): in-flow flex item at the top of the column layout,
+ *     compact padding, and the text labels on Compare / Download
+ *     collapse so the whole toolbar fits at 390px viewport.
+ *   - Desktop (≥ md): absolute, edge-to-edge, with `pointer-events:
+ *     none` on the bar so the central canvas can still receive wheel
+ *     and drag events through any empty space between the corners.
  */
 export function Header({
 	hasImage,
@@ -45,7 +49,12 @@ export function Header({
 	onDownload,
 }: HeaderProps) {
 	return (
-		<header className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-5">
+		<header
+			className={[
+				'z-20 flex flex-shrink-0 items-start justify-between gap-2 p-3',
+				'md:pointer-events-none md:absolute md:inset-x-0 md:top-0 md:p-5',
+			].join(' ')}
+		>
 			{/* Left: just the wordmark — minimal, no link clutter */}
 			<div className="pointer-events-auto pl-1 pt-1.5">
 				<a
@@ -65,7 +74,7 @@ export function Header({
 
 			{/* Right: history (undo / redo / start-over) + compare + download */}
 			{hasImage && (
-				<div className="card pointer-events-auto flex items-center gap-0.5 p-1.5">
+				<div className="card pointer-events-auto flex items-center gap-0.5 p-1 md:p-1.5">
 					<Button
 						variant="icon"
 						aria-label="Undo"
@@ -97,22 +106,34 @@ export function Header({
 						<RotateCcw className="h-[15px] w-[15px]" strokeWidth={1.85} />
 					</Button>
 					<Divider />
+					{/*
+					 * Compare / Download collapse to icon-only on mobile
+					 * to keep the whole bar inside a 390px viewport. The
+					 * accessible name (aria-label / visible-on-desktop
+					 * span) survives both layouts.
+					 */}
 					<Button
 						variant="toggle"
 						active={compareActive}
 						disabled={compareDisabled}
 						onClick={onCompare}
+						aria-label="Compare"
+						title="Compare"
+						className="px-2.5 md:px-3.5"
 						leadingIcon={<CompareIcon active={compareActive} />}
 					>
-						Compare
+						<span className="hidden md:inline">Compare</span>
 					</Button>
 					<Button
 						variant="primary"
 						disabled={downloadDisabled}
+						aria-label="Download"
+						title="Download"
+						className="px-2.5 md:px-3.5"
 						leadingIcon={<Download className="h-[14px] w-[14px]" strokeWidth={2.25} />}
 						onClick={onDownload}
 					>
-						Download
+						<span className="hidden md:inline">Download</span>
 					</Button>
 				</div>
 			)}

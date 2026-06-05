@@ -47,7 +47,7 @@ export function UpscalePanel({
 
 	return (
 		<div
-			className="card-floating w-[260px] flex-shrink-0 p-5 animate-rise"
+			className="card-floating flex-shrink-0 animate-rise w-full p-4 md:w-[260px] md:p-5"
 			style={{ animationDelay: '160ms' }}
 			aria-label="Upscale settings"
 		>

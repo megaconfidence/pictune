@@ -35,3 +35,36 @@ export function formatElapsed(ms: number): string {
 	const seconds = total % 60;
 	return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
+
+/**
+ * Calls `onImage` with the first image file on the clipboard whenever the
+ * user pastes (Cmd/Ctrl+V) anywhere on the page.
+ *
+ *   - Registered on `window` so a paste lands regardless of focus. No text
+ *     field in the app legitimately wants image clipboard data, so claiming
+ *     image pastes globally is safe; non-image pastes (plain text, etc.)
+ *     fall through untouched because we only act on image items.
+ *   - `preventDefault` fires only once we've actually found an image, so we
+ *     never swallow a paste we aren't going to handle.
+ *   - `onImage` should be stable (wrap in useCallback) — it's an effect dep,
+ *     so an unstable callback would re-bind the listener every render.
+ */
+export function usePasteImage(onImage: (file: File) => void): void {
+	useEffect(() => {
+		function handlePaste(e: ClipboardEvent) {
+			const items = e.clipboardData?.items;
+			if (!items) return;
+			for (let i = 0; i < items.length; i++) {
+				const item = items[i];
+				if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+				const file = item.getAsFile();
+				if (!file) continue;
+				e.preventDefault();
+				onImage(file);
+				return;
+			}
+		}
+		window.addEventListener('paste', handlePaste);
+		return () => window.removeEventListener('paste', handlePaste);
+	}, [onImage]);
+}

@@ -87,8 +87,24 @@ export function CompareSlider({
 			onPointerCancel={onPointerUp}
 			className="image-outline relative cursor-ew-resize overflow-hidden rounded-[12px] select-none animate-rise focus-visible:ring-2 focus-visible:ring-[var(--color-brand-ring)] focus-visible:ring-offset-4 focus-visible:ring-offset-[var(--color-canvas)] focus-visible:outline-none"
 			style={{
-				maxWidth: `min(${before.width}px, 60vw)`,
-				maxHeight: 'min(72vh, 820px)',
+				// Width budget is set via a CSS variable so the responsive
+				// vw cap can vary by breakpoint (set in styles.css under
+				// `.compare-canvas-bounds`) while the intrinsic image
+				// width still acts as an upper limit.
+				//
+				// Mobile (< md): up to 92vw — same generous footprint as
+				// the single-image viewer, since the tool panel stacks
+				// below the canvas.
+				//
+				// Desktop (≥ md): 60vw so the slider stays clear of the
+				// floating top-right tool panel; the user can still
+				// drag the divider to inspect either side cleanly.
+				maxWidth: `min(${before.width}px, var(--compare-canvas-vw, 92vw))`,
+				// Mobile flex layout passes a bounded height through main
+				// — `100%` resolves to that. On desktop the canvas is
+				// full-viewport, so we fall back to the original
+				// 72vh / 820px sweet spot.
+				maxHeight: 'min(100%, 72vh, 820px)',
 			}}
 		>
 			{/* Before (full image, base layer). */}

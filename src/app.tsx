@@ -10,6 +10,7 @@ import { Header } from './components/header';
 import { ImageViewer } from './components/image-viewer';
 import { Sidebar } from './components/sidebar';
 import { UpscalePanel } from './components/upscale-panel';
+import { usePasteImage } from './hooks';
 import { useTurnstile } from './turnstile';
 import {
 	type Action,
@@ -210,6 +211,12 @@ export default function App() {
 			// doesn't wipe out the user's existing state.
 			for (const oldUrl of urlsRef.current) URL.revokeObjectURL(oldUrl);
 			urlsRef.current = new Set([url]);
+			// A new image supersedes anything in flight. This matters now
+			// that paste can swap the image mid-session — without the abort
+			// a late result from the previous image could land on this one.
+			abortRef.current?.abort();
+			setProcessing(null);
+			setProcessingStartedAt(null);
 			setOriginal({
 				url,
 				name: file.name,
@@ -237,6 +244,13 @@ export default function App() {
 		probe.onerror = () => URL.revokeObjectURL(url);
 		probe.src = url;
 	}, []);
+
+	// Paste-to-upload (Cmd/Ctrl+V) anywhere on the page. Routes straight
+	// through handleFile, so a pasted screenshot behaves exactly like a
+	// dropped or browsed one — including replacing the current image and
+	// resetting derived state. handleFile is stable (empty deps), so the
+	// listener binds once.
+	usePasteImage(handleFile);
 
 	const handleReset = useCallback(() => {
 		abortRef.current?.abort();
@@ -634,30 +648,88 @@ export default function App() {
 	const afterHeight = result?.height ?? original?.height ?? 0;
 
 	return (
-		<div className="relative h-screen w-screen overflow-hidden bg-[var(--color-canvas)]">
+		<div
+			className={clsx(
+				// Mobile: flex-column stack so header / sidebar / canvas /
+				// panel sit on real pixels instead of overlapping. Uses
+				// 100dvh so iOS Safari's collapsing URL bar doesn't push
+				// content out of view. Desktop: block + relative restores
+				// the absolute-overlay layout where the canvas fills the
+				// viewport edge-to-edge and the side cards float on top.
+				'flex h-[100dvh] w-screen flex-col overflow-hidden bg-[var(--color-canvas)]',
+				'md:relative md:block md:h-screen',
+			)}
+		>
+			{/* Header — in-flow on mobile, absolute on desktop (z-20). */}
+			<Header
+				hasImage={!!original}
+				canUndo={canUndo}
+				canRedo={canRedo}
+				compareActive={compareActive}
+				compareDisabled={!canCompare}
+				downloadDisabled={!canDownload}
+				onReset={handleReset}
+				onUndo={undo}
+				onRedo={redo}
+				onCompare={() => setCompareActive((c) => !c)}
+				onDownload={downloadCurrent}
+			/>
+
 			{/*
-			 * Canvas viewport — fills the entire viewport so the image has
-			 * maximum real estate. The side panels float ON TOP of it
-			 * (z-10), not next to it, so the image can extend the full
-			 * width and even visually under the panels when zoomed in —
-			 * the user can pan to reveal anything hidden behind a card.
+			 * Sidebar wrapper.
 			 *
-			 *   absolute inset-0  fill viewport edge to edge
-			 *   overflow-hidden   clip the scaled image at viewport bounds
-			 *                     (kept from previous fix — without this,
-			 *                     a heavily-zoomed image would paint outside
-			 *                     the page and the browser would force a
-			 *                     scrollbar)
-			 *   ref               hosts the non-passive wheel listener
-			 *   onMouseDown       starts a pan-drag when canPan is true
-			 *   cursor            grab when ready to pan, grabbing while
-			 *                     actively dragging
+			 * Mobile: in-flow block under the header, full width with
+			 * 12px gutter so the card edge lines up with the tool panel
+			 * below. Sits as a flex-row of three tabs (handled inside
+			 * Sidebar via responsive classes).
+			 *
+			 * Desktop: absolute-floating at top-left as before.
+			 * pointer-events-none on the wrapper + auto on the inner
+			 * card so empty wrapper regions don't block canvas drag/wheel.
+			 */}
+			<div
+				className={clsx(
+					'z-10 flex-shrink-0 px-3 pt-1',
+					'md:pointer-events-none md:absolute md:top-24 md:left-6 md:px-0 md:pt-0',
+				)}
+			>
+				<div className="md:pointer-events-auto">
+					<Sidebar
+						activeTool={tool}
+						results={results}
+						onSelectTool={handleSelectTool}
+						onClearResult={handleClearResult}
+					/>
+				</div>
+			</div>
+
+			{/*
+			 * Canvas viewport.
+			 *
+			 * Mobile: flex-1 fills the leftover vertical space between
+			 * sidebar tabs and tool panel. min-h-0 is required so the
+			 * flex item can actually shrink below its content size
+			 * (without it, the image would push the panel off-screen).
+			 *
+			 * Desktop: absolute inset-0 fills the entire viewport so the
+			 * side cards visually float over a full-bleed canvas.
+			 *
+			 * Either way: overflow-hidden clips zoomed content, ref hosts
+			 * the non-passive wheel listener, and onMouseDown starts a
+			 * pan-drag when canPan is true.
 			 */}
 			<main
 				ref={mainRef}
 				onMouseDown={handleCanvasMouseDown}
 				className={clsx(
-					'absolute inset-0 flex items-center justify-center overflow-hidden',
+					'relative flex min-h-0 flex-1 items-center justify-center overflow-hidden',
+					'md:absolute md:inset-0 md:min-h-0 md:flex-initial',
+					// `--compare-canvas-vw` is consumed by CompareSlider
+					// to size itself within the canvas. Mobile gets the
+					// full 92vw since the tool panel stacks below;
+					// desktop reins it back to 60vw so the slider stays
+					// clear of the floating top-right tool panel.
+					'[--compare-canvas-vw:92vw] md:[--compare-canvas-vw:60vw]',
 					canPan && (isPanning ? 'cursor-grabbing' : 'cursor-grab'),
 				)}
 			>
@@ -685,48 +757,24 @@ export default function App() {
 				)}
 			</main>
 
-			{/* Header overlay — z-20 stays above the side panels. */}
-			<Header
-				hasImage={!!original}
-				canUndo={canUndo}
-				canRedo={canRedo}
-				compareActive={compareActive}
-				compareDisabled={!canCompare}
-				downloadDisabled={!canDownload}
-				onReset={handleReset}
-				onUndo={undo}
-				onRedo={redo}
-				onCompare={() => setCompareActive((c) => !c)}
-				onDownload={downloadCurrent}
-			/>
-
 			{/*
-			 * Sidebar — floating at top-left, below header.
+			 * Right tool panel.
 			 *
-			 * Positioned at top-24 (96px) so it clears the header's p-5 +
-			 * wordmark slot. left-6 (24px) matches the previous in-flow
-			 * px-6 horizontal rhythm.
-			 */}
-			<div className="pointer-events-none absolute top-24 left-6 z-10">
-				<div className="pointer-events-auto">
-					<Sidebar
-						activeTool={tool}
-						results={results}
-						onSelectTool={handleSelectTool}
-						onClearResult={handleClearResult}
-					/>
-				</div>
-			</div>
-
-			{/*
-			 * Right tool panel — floating at top-right, below header.
+			 * Mobile: in-flow at the bottom of the column, full width
+			 * with 12px gutter, anchored above the safe-area inset.
 			 *
-			 * Conditional on `original` so the empty drop-zone state
-			 * doesn't show a panel for nothing.
+			 * Desktop: absolute-floating at top-right, conditional on
+			 * `original` so the empty drop-zone state doesn't show a
+			 * panel for nothing.
 			 */}
 			{original && (
-				<div className="pointer-events-none absolute top-24 right-6 z-10">
-					<div className="pointer-events-auto">
+				<div
+					className={clsx(
+						'z-10 flex-shrink-0 px-3 pb-3',
+						'md:pointer-events-none md:absolute md:top-24 md:right-6 md:px-0 md:pb-0',
+					)}
+				>
+					<div className="md:pointer-events-auto">
 						{tool === 'background' && (
 							<BackgroundPanel
 								processing={isProcessing}
@@ -761,6 +809,11 @@ export default function App() {
 				</div>
 			)}
 
+			{/*
+			 * Zoom + about controls. Hidden on mobile (no pinch zoom
+			 * support yet, and floating clusters would overlap the
+			 * bottom tool panel). Desktop keeps the bottom-right pair.
+			 */}
 			<BottomControls
 				zoom={zoom}
 				hasImage={!!original}

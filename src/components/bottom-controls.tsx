@@ -20,6 +20,11 @@ interface BottomControlsProps {
  * Both clusters live in `pointer-events: none` wrappers; their children
  * re-enable it so the underlying canvas stays drag-droppable when empty.
  *
+ * Hidden on mobile (< md) for two reasons: there's no pinch-to-zoom
+ * yet, so the −/+ pill would be the only zoom mechanism and we'd rather
+ * fix the gesture story first; and a floating bottom-right cluster
+ * would overlap the in-flow tool panel that anchors the mobile layout.
+ *
  * The credit popover is co-located with its trigger so positioning,
  * focus, and outside-click dismissal can be managed with one ref.
  */
@@ -60,7 +65,7 @@ export function BottomControls({
 	const zoomPct = Math.round(zoom * 100);
 
 	return (
-		<div className="pointer-events-none absolute right-5 bottom-5 z-10 flex items-end gap-2">
+		<div className="pointer-events-none absolute right-5 bottom-5 z-10 hidden items-end gap-2 md:flex">
 			{hasImage && (
 				<div
 					className="card pointer-events-auto flex items-center gap-0.5 p-1"
