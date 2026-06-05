@@ -36,6 +36,14 @@ interface ImageViewerProps {
 const ELAPSED_VISIBLE_AFTER_MS = 3000;
 
 /**
+ * After this long, reassure the user that a slow tool is still working rather
+ * than stuck. Only the upscaler is slow enough to warrant it: a 4× upscale
+ * routinely runs for several minutes (see POLL_TIMEOUT_MS in api.ts), whereas
+ * background removal and expand finish in seconds.
+ */
+const HINT_VISIBLE_AFTER_MS = 6000;
+
+/**
  * Single-image preview shown after a file is uploaded and the user is NOT
  * in compare mode.
  *
@@ -156,14 +164,24 @@ function ProcessingBadge({ tool, startedAt }: { tool: Tool; startedAt: number | 
 				: tool === 'expand'
 					? 'Expanding…'
 					: 'Processing…';
+	// Only the upscaler runs long enough to need reassurance; showing it for
+	// the quick tools would just be noise.
+	const showHint = tool === 'upscale' && elapsedMs >= HINT_VISIBLE_AFTER_MS;
 	return (
-		<div className="flex items-center gap-2.5 rounded-full bg-white px-4 py-2 text-[13px] font-medium text-[var(--color-ink)] shadow-[0_0_0_1px_rgba(0,0,0,0.05),0_2px_4px_rgba(0,0,0,0.06),0_8px_24px_rgba(0,0,0,0.08)]">
-			<Spinner />
-			<span>{label}</span>
-			{showElapsed && (
-				<span className="tabular-nums text-[var(--color-ink-muted)]">
-					{formatElapsed(elapsedMs)}
-				</span>
+		<div className="flex flex-col items-center gap-2">
+			<div className="flex items-center gap-2.5 rounded-full bg-white px-4 py-2 text-[13px] font-medium text-[var(--color-ink)] shadow-[0_0_0_1px_rgba(0,0,0,0.05),0_2px_4px_rgba(0,0,0,0.06),0_8px_24px_rgba(0,0,0,0.08)]">
+				<Spinner />
+				<span>{label}</span>
+				{showElapsed && (
+					<span className="tabular-nums text-[var(--color-ink-muted)]">
+						{formatElapsed(elapsedMs)}
+					</span>
+				)}
+			</div>
+			{showHint && (
+				<div className="rounded-full bg-white/90 px-3 py-1 text-[11.5px] text-[var(--color-ink-muted)] shadow-[0_0_0_1px_rgba(0,0,0,0.04),0_2px_8px_rgba(0,0,0,0.06)] backdrop-blur-sm">
+					Hang tight — larger upscales can take a few minutes
+				</div>
 			)}
 		</div>
 	);

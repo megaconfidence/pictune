@@ -25,9 +25,9 @@ export function useElapsed(startedAt: number | null): number {
 }
 
 /**
- * Format a millisecond duration as `M:SS`. Saturates at 9:59 — anything
- * longer than that is misformatted but acceptable, the UI should have
- * timed out by then.
+ * Format a millisecond duration as `M:SS` (e.g. "0:34", "12:05"). Minutes
+ * aren't padded and have no ceiling, so long-running jobs like a 4× upscale
+ * (which can run well past 10 minutes) still read correctly.
  */
 export function formatElapsed(ms: number): string {
 	const total = Math.floor(ms / 1000);

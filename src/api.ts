@@ -38,8 +38,19 @@ const POLL_MULTIPLIER = 1.5;
 const POLL_MAX_MS = 5000;
 const POLL_JITTER = 0.2;
 
-/** Hard wall: give up on a single prediction after this long. */
-const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+/**
+ * Hard wall: give up on a single prediction after this long.
+ *
+ * Sized for the slowest tool by far — the clarity-pro upscaler. A 4× upscale
+ * of a normal photo runs ~4–5 min once the model is warm (e.g. a 1714×1144
+ * source measured at ~256s), and a cold start (the model scales to zero and
+ * has to boot) or a larger source easily pushes it past 10 minutes. This is
+ * the whole reason the client owns the poll loop (see server.ts) — so the cap
+ * has to clear that, otherwise 4× upscales time out and look "broken" even
+ * though the prediction is still running and would have succeeded. (Was 5
+ * minutes, which 2× clears but 4× usually does not.)
+ */
+const POLL_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 
 /**
  * Tolerate this many consecutive failed polls before bailing. A poll can fail
