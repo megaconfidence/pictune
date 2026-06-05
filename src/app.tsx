@@ -549,6 +549,23 @@ export default function App() {
 	const afterWidth = tip?.width ?? 0;
 	const afterHeight = tip?.height ?? 0;
 
+	// Compare shows the effect of the LAST step: its input (the tip *before*
+	// that step) vs its output (the current tip) — not the whole chain. With
+	// only one step applied, that input is the original upload.
+	const compareBefore = steps.length >= 2 ? steps[steps.length - 2].image : original;
+	// The "before" carries transparency if a background removal happened at or
+	// before the step that produced it (i.e. anywhere but the final step).
+	const compareBeforeTransparent = steps
+		.slice(0, steps.length - 1)
+		.some((s) => s.tool === 'background');
+	// Only checker the "before" when it fills the frame (same aspect as the
+	// result); a letterboxed before would otherwise paint checker outside the
+	// image. The "after" always fills the frame, so its checker is always safe.
+	const compareSameAspect =
+		!!compareBefore &&
+		!!tip &&
+		Math.abs(compareBefore.width / compareBefore.height - tip.width / tip.height) < 0.01;
+
 	return (
 		<div
 			className={clsx(
@@ -626,6 +643,11 @@ export default function App() {
 				className={clsx(
 					'relative flex min-h-0 flex-1 items-center justify-center overflow-hidden',
 					'md:absolute md:inset-0 md:min-h-0 md:flex-initial',
+					// Container-query context for the canvas: lets the
+					// CompareSlider size its frame against the canvas height
+					// (cqh) regardless of the auto-sized frame in between —
+					// the same trick the ImageViewer uses for its own box.
+					'[container-type:size]',
 					// `--compare-canvas-vw` is consumed by CompareSlider
 					// to size itself within the canvas. Mobile gets the
 					// full 92vw since the tool panel stacks below;
@@ -639,8 +661,9 @@ export default function App() {
 					<DropZone onFile={handleFile} />
 				) : compareActive && tip && hasSteps && !isProcessing ? (
 					<CompareSlider
-						before={original}
+						before={compareBefore ?? original}
 						after={tip}
+						showCheckerBefore={compareBeforeTransparent && compareSameAspect}
 						showCheckerAfter={tipHasTransparency}
 						afterWidth={afterWidth}
 						afterHeight={afterHeight}

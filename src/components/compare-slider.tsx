@@ -4,7 +4,9 @@ import type { ImageState } from '../types';
 interface CompareSliderProps {
 	before: ImageState;
 	after: ImageState;
-	/** Display the checkerboard behind the "after" image (for background tool). */
+	/** Display the checkerboard behind the "before" image (transparent input). */
+	showCheckerBefore: boolean;
+	/** Display the checkerboard behind the "after" image (transparent result). */
 	showCheckerAfter: boolean;
 	/** Display dimensions of the "after" image. Used for the corner label. */
 	afterWidth: number;
@@ -12,9 +14,10 @@ interface CompareSliderProps {
 }
 
 /**
- * Before / after slider used when "Compare" is toggled on. The "before"
- * image is the original upload; the "after" image is the Worker's
- * processed result, layered on top and clipped to the right of the
+ * Before / after slider used when "Compare" is toggled on. It shows the
+ * effect of the most recent step: "before" is that step's input (the previous
+ * tip, or the original upload if it's the first step) and "after" is the step's
+ * output. The "after" is layered on top and clipped to the right of the
  * divider.
  *
  * Pointer + keyboard driven: ← / → nudges by 2% (Shift = 10%).
@@ -24,6 +27,7 @@ interface CompareSliderProps {
 export function CompareSlider({
 	before,
 	after,
+	showCheckerBefore,
 	showCheckerAfter,
 	afterWidth,
 	afterHeight,
@@ -87,33 +91,34 @@ export function CompareSlider({
 			onPointerCancel={onPointerUp}
 			className="image-outline relative cursor-ew-resize overflow-hidden rounded-[12px] select-none animate-rise focus-visible:ring-2 focus-visible:ring-[var(--color-brand-ring)] focus-visible:ring-offset-4 focus-visible:ring-offset-[var(--color-canvas)] focus-visible:outline-none"
 			style={{
-				// Width budget is set via a CSS variable so the responsive
-				// vw cap can vary by breakpoint (set in styles.css under
-				// `.compare-canvas-bounds`) while the intrinsic image
-				// width still acts as an upper limit.
-				//
-				// Mobile (< md): up to 92vw — same generous footprint as
-				// the single-image viewer, since the tool panel stacks
-				// below the canvas.
-				//
-				// Desktop (≥ md): 60vw so the slider stays clear of the
-				// floating top-right tool panel; the user can still
-				// drag the divider to inspect either side cleanly.
-				maxWidth: `min(${before.width}px, var(--compare-canvas-vw, 92vw))`,
-				// Mobile flex layout passes a bounded height through main
-				// — `100%` resolves to that. On desktop the canvas is
-				// full-viewport, so we fall back to the original
-				// 72vh / 820px sweet spot.
-				maxHeight: 'min(100%, 72vh, 820px)',
+				// The frame takes the RESULT's (after) aspect ratio and both
+				// images are object-contained inside it. That's what keeps the
+				// comparison sane when the two images are differently shaped —
+				// e.g. a landscape original vs a 9:16 expand. The result fills
+				// the frame; the original is centred within it, which lines the
+				// two up (expand embeds the original centred). When the shapes
+				// match, both simply fill the frame, exactly as before.
+				aspectRatio: `${after.width} / ${after.height}`,
+				// Largest box of that aspect ratio that fits the canvas. Capped
+				// by the result's natural width, the responsive width budget
+				// (60vw desktop / 92vw mobile), and — via the cqh term — the
+				// height budget, so the box never overflows vertically. cqh is
+				// the canvas height (main is the container-query context), which
+				// resolves correctly on both desktop and the shorter mobile
+				// canvas. aspect-ratio then derives the height from this width.
+				width: `min(${after.width}px, var(--compare-canvas-vw, 92vw), calc(min(100cqh, 72vh, 820px) * ${after.width} / ${after.height}))`,
 			}}
 		>
-			{/* Before (full image, base layer). */}
+			{/* Before — base layer. Object-contained so a differently shaped
+			    input is letterboxed (and, for expand, aligned) inside the
+			    result-shaped frame instead of stretching it. A checker sits
+			    behind it when the input itself is transparent. */}
+			{showCheckerBefore && <div className="bg-checker absolute inset-0" aria-hidden />}
 			<img
 				src={before.url}
 				alt={`${before.name} before`}
 				draggable={false}
-				className="block h-auto w-full select-none"
-				style={{ maxHeight: 'min(72vh, 820px)' }}
+				className="absolute inset-0 block h-full w-full select-none object-contain"
 			/>
 
 			{/* After (clipped to the portion right of the divider). */}

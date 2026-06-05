@@ -63,29 +63,28 @@ export function ImageViewer({
 	error,
 }: ImageViewerProps) {
 	return (
-		<div className="animate-rise relative grid h-full max-h-full w-full max-w-full place-items-center">
+		// `container-type: size` turns the canvas into a query container so
+		// the image below can be sized with cqw/cqh units. Those resolve
+		// against THIS box (the canvas) regardless of the shrink-to-fit frame
+		// in between — a plain `max-height: 100%` on the image would resolve
+		// against that auto-height frame, where a percentage doesn't bind, so
+		// a tall image overflowed the frame and got clipped by its
+		// `overflow-hidden`. The canvas always has a definite size (full
+		// viewport on desktop, the flex-1 leftover on mobile).
+		<div className="animate-rise relative grid h-full max-h-full w-full max-w-full place-items-center [container-type:size]">
 			<div
 				className={clsx(
 					'image-outline relative overflow-hidden rounded-[12px]',
 					showChecker && 'bg-checker',
 				)}
 				style={{
-					// Bigger max footprint than the old 60vw / 72vh — the
-					// side panels are floating overlays now so the image
-					// is free to use almost the full canvas. We still
-					// hold back ~4vw / 8vh so a fit-zoomed image doesn't
-					// run completely under the floating cards.
-					maxWidth: `min(${image.width}px, 92vw)`,
-					// Cap height to the parent's available height so the
-					// image always fits inside the canvas viewport. On
-					// mobile the canvas shrinks to whatever is left after
-					// the header / sidebar tabs / tool panel claim their
-					// space; on desktop the canvas fills the viewport so
-					// this just resolves to the full screen height.
-					maxHeight: '100%',
-					// translate AFTER scale (right-most function runs
-					// first in CSS transforms): that way pan.x maps to
-					// screen pixels 1:1 regardless of zoom.
+					// The frame shrink-wraps the image (which is itself sized
+					// to fit the canvas below), so the outline / checker /
+					// rounded corners always hug the image exactly.
+					//
+					// translate AFTER scale (right-most function runs first in
+					// CSS transforms): that way pan.x maps to screen pixels 1:1
+					// regardless of zoom.
 					transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
 					transformOrigin: 'center center',
 					// Only ease for discrete (button) zoom changes. During
@@ -102,15 +101,21 @@ export function ImageViewer({
 					alt={image.name}
 					draggable={false}
 					className={clsx(
-						'block h-auto max-h-full w-auto max-w-full select-none',
+						'block h-auto w-auto select-none',
 						'transition-opacity duration-300',
 						processing && 'opacity-35',
 					)}
-					// Hard ceiling for very tall portrait images on
-					// desktop — keeps a 5000px upload from blowing past
-					// the 84vh / 980px sweet-spot the design assumes.
-					// Mobile relies on the max-h-full cascade above.
-					style={{ maxHeight: 'min(100%, 980px)' }}
+					// Fit the image inside the canvas while preserving aspect
+					// ratio: both maxes bind on the replaced element, so the
+					// browser scales it down to whichever constraint hits
+					// first. cqw/cqh = % of the canvas (the query container
+					// above), so the image never exceeds the visible area and
+					// is never cropped. We also never upscale past the image's
+					// natural size, and cap very large images at 980px tall.
+					style={{
+						maxWidth: `min(${image.width}px, 92cqw)`,
+						maxHeight: `min(${image.height}px, 92cqh, 980px)`,
+					}}
 				/>
 
 				{processing && (
