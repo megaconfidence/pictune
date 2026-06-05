@@ -1,14 +1,14 @@
 import clsx from 'clsx';
-import { Eraser, Frame, Sparkles, X } from 'lucide-react';
+import { Eraser, Frame, Sparkles } from 'lucide-react';
 import type { Tool } from '../types';
 
 interface SidebarProps {
 	activeTool: Tool;
-	/** True for each tool that currently has a cached result. */
+	/** True for each tool that appears anywhere in the current remix chain. */
 	results: Record<Tool, boolean>;
+	/** Locks tool switching (and dims the rail) while a transform runs. */
+	disabled?: boolean;
 	onSelectTool: (tool: Tool) => void;
-	/** Per-tool X: undo just this tool's transformation. */
-	onClearResult: (tool: Tool) => void;
 }
 
 /**
@@ -40,22 +40,27 @@ const TOOLS: { id: Tool; label: string; desc: string; Icon: typeof Eraser }[] = 
  *   - Active row/tab: teal-tinted icon tile on a soft-gray background.
  *     One quiet color signal per item — the same teal that appears in
  *     the wordmark dot and primary CTAs.
- *   - Result dot: small teal pip next to the label, shown when that
- *     tool has produced an image. Stays visible in both layouts.
- *   - Clear-X (desktop only): clears just that tool's result via an
- *     action so the change lands in the undo stack. Stopped from
- *     bubbling so the parent row's onClick doesn't re-select what
- *     we're trying to clear.
+ *   - Result dot: small teal pip next to the label, shown when that tool
+ *     has been applied somewhere in the current remix chain. Stays
+ *     visible in both layouts.
+ *
+ * Picking a tool selects the next operation to apply — it does not change
+ * what the canvas shows (that's always the chain tip). While a transform
+ * runs the whole rail is locked (`disabled`) so the visible panel and the
+ * processing badge stay in sync with the running tool; Undo in the header
+ * is how you step back through the chain.
  */
-export function Sidebar({ activeTool, results, onSelectTool, onClearResult }: SidebarProps) {
+export function Sidebar({ activeTool, results, disabled = false, onSelectTool }: SidebarProps) {
 	return (
 		<aside
 			className={clsx(
 				'card-floating animate-rise flex-shrink-0 p-2',
 				'w-full md:w-[220px] md:p-2.5',
+				disabled && 'pointer-events-none opacity-60',
 			)}
 			style={{ animationDelay: '80ms' }}
 			aria-label="Editor tools"
+			aria-disabled={disabled || undefined}
 		>
 			<ul
 				className={clsx(
@@ -128,8 +133,8 @@ export function Sidebar({ activeTool, results, onSelectTool, onClearResult }: Si
 										</span>
 										{hasResult && (
 											<span
-												aria-label="Has result"
-												title="Has result"
+												aria-label="Applied in this remix"
+												title="Applied in this remix"
 												className="block h-[5px] w-[5px] rounded-full bg-[var(--color-brand)]"
 											/>
 										)}
@@ -139,34 +144,6 @@ export function Sidebar({ activeTool, results, onSelectTool, onClearResult }: Si
 										{desc}
 									</span>
 								</span>
-
-								{/*
-								 * Clear-result X. Desktop only — on mobile,
-								 * users undo via the header's Undo button (no
-								 * room for hover affordances on touch).
-								 */}
-								{hasResult && (
-									<span
-										role="button"
-										tabIndex={0}
-										aria-label={`Clear ${label} result`}
-										title={`Clear ${label} result`}
-										onClick={(e) => {
-											e.stopPropagation();
-											onClearResult(id);
-										}}
-										onKeyDown={(e) => {
-											if (e.key === 'Enter' || e.key === ' ') {
-												e.preventDefault();
-												e.stopPropagation();
-												onClearResult(id);
-											}
-										}}
-										className="hit-40 hidden h-7 w-7 flex-shrink-0 place-items-center rounded-md text-[var(--color-ink-subtle)] opacity-0 transition-opacity duration-150 hover:bg-[var(--color-surface)] hover:text-[var(--color-ink)] group-hover:opacity-100 group-focus-within:opacity-100 md:grid"
-									>
-										<X className="h-3.5 w-3.5" strokeWidth={2} />
-									</span>
-								)}
 							</button>
 						</li>
 					);

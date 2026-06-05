@@ -13,16 +13,13 @@ import { UpscalePanel } from './components/upscale-panel';
 import { usePasteImage } from './hooks';
 import { useTurnstile } from './turnstile';
 import {
-	type Action,
 	type AspectRatioPreset,
-	type BackgroundState,
 	blobToImageState,
-	type ExpandResultState,
 	type ExpandSettings,
 	type ImageState,
+	type Step,
 	type Tool,
 	type UpscaleSettings,
-	type UpscaleState,
 } from './types';
 
 /* ---------------------------------------------------------------------- *
@@ -46,45 +43,40 @@ function clamp(n: number, min: number, max: number) {
 /**
  * Top-level container.
  *
- * State model:
+ * State model — a linear transformation pipeline ("remix chain"):
  *
  *   original              — the user's upload. Kept as both an ImageState (for
- *                           display) and the raw File (so we can re-POST it
- *                           to the Worker without re-uploading).
- *   background /          — cached result of each tool. Independent: every
- *   upscaleResult /         tool processes the *original*, not a chain of
- *   expandResult            priors, so we keep three parallel slots and
- *                           switch the viewer based on the active tool.
- *   undoStack / redoStack — chronological history of result mutations. Each
- *                           entry is an Action that records before/after
- *                           snapshots for one tool. Run pushes an action;
- *                           the per-tool X pushes an action; Undo in the
- *                           header pops the latest and applies its `before`;
- *                           Redo re-applies the last popped action's `after`.
- *                           Neither button re-runs the API — we just restore
- *                           cached image bytes.
- *   processing            — which tool is currently running, if any. Used
- *                           to show the loading overlay.
- *   error                 — last error message, scoped to the active tool.
+ *                           display) and the raw File (so the first transform
+ *                           has something to POST).
+ *   steps                 — the chain of applied transformations, in order.
+ *                           Each Step holds its OUTPUT as both an ImageState
+ *                           and a File; the File of the last step is the INPUT
+ *                           to the next one. The tip of this list (or the
+ *                           original, when empty) is what the canvas shows.
+ *   redoSteps             — steps that have been undone, ready to re-apply.
+ *                           Undo moves the tip here; redo moves it back; a new
+ *                           transform clears it.
+ *   tool                  — which tool's panel is shown, i.e. the next
+ *                           operation to apply. It does NOT change what the
+ *                           canvas shows — the canvas always shows the tip.
+ *   processing            — which tool is currently running, if any. Also
+ *                           locks tool switching for the duration.
+ *   error                 — last error message.
  *
- * Object-URL lifecycle: any URL we create (either from blobToImageState for
- * a result, or directly from the uploaded File) is appended to a Set we
- * revoke en masse on Reset / new upload / unmount. We can't auto-revoke on
- * state change because undo and redo restore cached results — revoking the
- * URL mid-history would leave us with a dead reference. The Set is bounded
- * in practice (one upload + at most a few generated images per session).
+ * Object-URL lifecycle: any URL we create (via blobToImageState for a step,
+ * or directly from the uploaded File) is appended to a Set we revoke en masse
+ * on Reset / new upload / unmount. We can't auto-revoke on undo because the
+ * redo stack still references those URLs. The Set is bounded in practice
+ * (one upload + a few generated images per session).
  */
 export default function App() {
 	const [tool, setTool] = useState<Tool>('background');
 	const [original, setOriginal] = useState<ImageState | null>(null);
 	const [originalFile, setOriginalFile] = useState<File | null>(null);
 
-	const [background, setBackground] = useState<BackgroundState>(null);
-	const [upscaleResult, setUpscaleResult] = useState<UpscaleState>(null);
-	const [expandResult, setExpandResult] = useState<ExpandResultState>(null);
-
-	const [undoStack, setUndoStack] = useState<Action[]>([]);
-	const [redoStack, setRedoStack] = useState<Action[]>([]);
+	// The remix chain (undo stack) and the parallel redo stack.
+	const [steps, setSteps] = useState<Step[]>([]);
+	const [redoSteps, setRedoSteps] = useState<Step[]>([]);
 
 	const [processing, setProcessing] = useState<Tool | null>(null);
 	const [processingStartedAt, setProcessingStartedAt] = useState<number | null>(null);
@@ -139,64 +131,69 @@ export default function App() {
 	);
 
 	/* ------------------------------------------------------------------ *
+	 * Chain tip                                                           *
+	 * ------------------------------------------------------------------ *
+	 *
+	 * The tip is the last applied step (or the original upload when the
+	 * chain is empty). It is both what the canvas renders and what the next
+	 * transform consumes. `tipFile` is mirrored into a ref so the async
+	 * run* callbacks can read the current input without listing it as a
+	 * dependency (which would rebind them on every step) or closing over a
+	 * stale value.
+	 */
+	const lastStep = steps.length > 0 ? steps[steps.length - 1] : null;
+	const lastTool = lastStep?.tool ?? null;
+	const tip = lastStep ? lastStep.image : original;
+	const tipFile = lastStep ? lastStep.file : originalFile;
+	const tipFileRef = useRef(tipFile);
+	tipFileRef.current = tipFile;
+
+	// Keep the Expand panel's W/H seeded to the current tip so its inputs and
+	// custom-ratio math reflect the image you're actually about to expand.
+	// Re-seeds on upload and after every step / undo / redo (tip dims change).
+	useEffect(() => {
+		if (!tip) return;
+		setExpandSettings({
+			choice: 'custom',
+			width: tip.width,
+			height: tip.height,
+			linked: true,
+		});
+	}, [tip?.width, tip?.height]);
+
+	/* ------------------------------------------------------------------ *
 	 * Undo / redo                                                         *
-	 * ------------------------------------------------------------------ */
-
-	/**
-	 * Apply one side of an action to the corresponding tool's state. The
-	 * action's `tool` discriminator narrows before/after to the right shape,
-	 * so the setter call is type-safe without runtime checks on the payload.
+	 * ------------------------------------------------------------------ *
+	 *
+	 * The chain is a linear history: `steps` holds everything applied so far
+	 * (the tip is the last entry), `redoSteps` holds what's been undone.
+	 * Undo pops the tip onto the redo stack; redo moves it back. A new
+	 * transform clears the redo stack (the canonical "new action drops the
+	 * forward branch" behaviour). Neither re-runs the API — we just move
+	 * cached step results between the two stacks.
+	 *
+	 * Both stacks are read at call time (not via setState updaters): nesting
+	 * a setState inside another setState's updater double-executes under
+	 * React StrictMode in dev, silently corrupting the stack.
 	 */
-	const applyAction = useCallback((action: Action, side: 'before' | 'after') => {
-		if (action.tool === 'background') {
-			setBackground(action[side]);
-		} else if (action.tool === 'upscale') {
-			setUpscaleResult(action[side]);
-		} else if (action.tool === 'expand') {
-			setExpandResult(action[side]);
-		}
-	}, []);
-
-	/**
-	 * Push a new action onto the undo stack and clear the redo stack — the
-	 * canonical "linear history loses its forward branch on new action"
-	 * behaviour everyone expects from Cmd+Z.
-	 */
-	const recordAction = useCallback((action: Action) => {
-		setUndoStack((s) => [...s, action]);
-		setRedoStack([]);
-	}, []);
-
-	// Both stacks are read at call time (not via setState updaters) so we can
-	// keep all side-effecting calls (setTool, applyAction, etc.) OUTSIDE the
-	// updaters. Nesting a setState inside another setState's updater triggers
-	// double execution under React StrictMode in dev, which doubles the
-	// updates queued by the inner setter — silently corrupting the stack.
 	const undo = useCallback(() => {
-		if (undoStack.length === 0) return;
-		const action = undoStack[undoStack.length - 1];
-		applyAction(action, 'before');
-		// Switch active tool so the canvas reflects the change. Without this,
-		// undoing an inactive tool's action would look like nothing happened.
-		setTool(action.tool);
-		// Compare slider compares "before" against "after" — neither is
-		// guaranteed to still exist after a history hop, so close it.
+		if (steps.length === 0) return;
+		const popped = steps[steps.length - 1];
+		setSteps(steps.slice(0, -1));
+		setRedoSteps([...redoSteps, popped]);
+		// Compare contrasts original vs tip — the tip just moved, so close it.
 		setCompareActive(false);
 		setError(null);
-		setUndoStack(undoStack.slice(0, -1));
-		setRedoStack([...redoStack, action]);
-	}, [undoStack, redoStack, applyAction]);
+	}, [steps, redoSteps]);
 
 	const redo = useCallback(() => {
-		if (redoStack.length === 0) return;
-		const action = redoStack[redoStack.length - 1];
-		applyAction(action, 'after');
-		setTool(action.tool);
+		if (redoSteps.length === 0) return;
+		const popped = redoSteps[redoSteps.length - 1];
+		setRedoSteps(redoSteps.slice(0, -1));
+		setSteps([...steps, popped]);
 		setCompareActive(false);
 		setError(null);
-		setRedoStack(redoStack.slice(0, -1));
-		setUndoStack([...undoStack, action]);
-	}, [undoStack, redoStack, applyAction]);
+	}, [steps, redoSteps]);
 
 	/* ------------------------------------------------------------------ *
 	 * File handling                                                       *
@@ -224,18 +221,10 @@ export default function App() {
 				height: probe.naturalHeight,
 			});
 			setOriginalFile(file);
-			// Reset per-image derived state.
-			setBackground(null);
-			setUpscaleResult(null);
-			setExpandResult(null);
-			setUndoStack([]);
-			setRedoStack([]);
-			setExpandSettings({
-				choice: 'custom',
-				width: probe.naturalWidth,
-				height: probe.naturalHeight,
-				linked: true,
-			});
+			// A fresh upload starts a new chain. (Expand settings are seeded
+			// from the tip by the effect above, so no need to set them here.)
+			setSteps([]);
+			setRedoSteps([]);
 			setCompareActive(false);
 			setZoom(1);
 			setPan({ x: 0, y: 0 });
@@ -258,11 +247,8 @@ export default function App() {
 		urlsRef.current.clear();
 		setOriginal(null);
 		setOriginalFile(null);
-		setBackground(null);
-		setUpscaleResult(null);
-		setExpandResult(null);
-		setUndoStack([]);
-		setRedoStack([]);
+		setSteps([]);
+		setRedoSteps([]);
 		setProcessing(null);
 		setProcessingStartedAt(null);
 		setError(null);
@@ -271,79 +257,65 @@ export default function App() {
 		setPan({ x: 0, y: 0 });
 	}, []);
 
-	const handleSelectTool = useCallback((next: Tool) => {
-		setTool(next);
-		setCompareActive(false);
-		setError(null);
-	}, []);
-
-	/**
-	 * Per-tool X button. Clears that tool's result via an action so the
-	 * change lands in history (and can be undone). If the user happens to
-	 * be running this same tool right now, we also abort the in-flight job
-	 * — there's no point letting it overwrite null with a result the user
-	 * just declared they didn't want.
-	 */
-	const handleClearResult = useCallback(
-		(target: Tool) => {
-			if (processing === target) {
-				abortRef.current?.abort();
-				setProcessing(null);
-				setProcessingStartedAt(null);
-			}
-			if (target === 'background' && background) {
-				recordAction({ tool: 'background', before: background, after: null });
-				setBackground(null);
-			} else if (target === 'upscale' && upscaleResult) {
-				recordAction({ tool: 'upscale', before: upscaleResult, after: null });
-				setUpscaleResult(null);
-			} else if (target === 'expand' && expandResult) {
-				recordAction({ tool: 'expand', before: expandResult, after: null });
-				setExpandResult(null);
-			}
-			// If we just wiped what the canvas was showing, drop compare mode.
-			if (target === tool) {
-				setCompareActive(false);
-			}
+	const handleSelectTool = useCallback(
+		(next: Tool) => {
+			// Locked while a transform runs so the visible panel and the
+			// processing badge can't drift apart from the running tool.
+			if (processing !== null) return;
+			setTool(next);
+			setCompareActive(false);
+			setError(null);
 		},
-		[processing, background, upscaleResult, expandResult, recordAction, tool],
+		[processing],
 	);
 
 	/* ------------------------------------------------------------------ *
-	 * Replicate calls                                                     *
-	 * ------------------------------------------------------------------ */
-
-	// Each run* receives `prior` — that tool's result at the moment the user
-	// clicked Run. On success we record {before: prior, after: new} so undo
-	// restores prior. On abort we bail before recording, keeping history
-	// clean.
-	//
-	// We deliberately do NOT clear the prior result before starting. The
-	// ImageViewer dims it and overlays the spinner instead — a "your
-	// previous result is being replaced" affordance, rather than a flash
-	// back to the original.
-
-	const runBackground = useCallback(
-		async (file: File, prior: BackgroundState) => {
+	 * Transform pipeline                                                  *
+	 * ------------------------------------------------------------------ *
+	 *
+	 * Every transform consumes the current tip (the last step's file, or the
+	 * original upload) and, on success, pushes a new step whose output
+	 * becomes the next tip. That feed-the-result-back-in is the whole
+	 * "remix" mechanic.
+	 *
+	 * We deliberately do NOT clear the tip before starting: the ImageViewer
+	 * dims it and overlays a spinner, so the canvas reads as "your current
+	 * image is being transformed" rather than flashing back to the original.
+	 *
+	 * On abort (a new run / reset / new upload superseding this one) we bail
+	 * before pushing, keeping the chain clean.
+	 */
+	const runStep = useCallback(
+		async (
+			stepTool: Tool,
+			name: string,
+			call: (
+				file: File,
+				options: { signal: AbortSignal; turnstileToken: string },
+			) => Promise<Blob>,
+		) => {
+			const input = tipFileRef.current;
+			if (!input) return;
 			abortRef.current?.abort();
 			const controller = new AbortController();
 			abortRef.current = controller;
-			setProcessing('background');
+			setProcessing(stepTool);
 			setProcessingStartedAt(Date.now());
 			setError(null);
+			setCompareActive(false);
 			try {
 				const turnstileToken = await getTurnstileToken();
 				if (controller.signal.aborted) return;
-				const blob = await api.removeBackground(file, {
-					signal: controller.signal,
-					turnstileToken,
-				});
+				const blob = await call(input, { signal: controller.signal, turnstileToken });
 				if (controller.signal.aborted) return;
-				const image = await blobToImageState(blob, 'background-removed.png');
+				const image = await blobToImageState(blob, name);
 				if (controller.signal.aborted) return;
+				// Same bytes as `image`, kept as a File so this result can be
+				// the input to the next transform in the chain.
+				const file = new File([blob], name, { type: blob.type || 'image/png' });
 				trackUrl(image.url);
-				setBackground(image);
-				recordAction({ tool: 'background', before: prior, after: image });
+				setSteps((prev) => [...prev, { tool: stepTool, image, file }]);
+				setRedoSteps([]);
 			} catch (e) {
 				if (controller.signal.aborted) return;
 				setError(messageFor(e));
@@ -354,95 +326,30 @@ export default function App() {
 				}
 			}
 		},
-		[recordAction, trackUrl, getTurnstileToken],
-	);
-
-	const runUpscale = useCallback(
-		async (file: File, settings: UpscaleSettings, prior: UpscaleState) => {
-			abortRef.current?.abort();
-			const controller = new AbortController();
-			abortRef.current = controller;
-			setProcessing('upscale');
-			setProcessingStartedAt(Date.now());
-			setError(null);
-			try {
-				const turnstileToken = await getTurnstileToken();
-				if (controller.signal.aborted) return;
-				const blob = await api.upscale(file, settings, {
-					signal: controller.signal,
-					turnstileToken,
-				});
-				if (controller.signal.aborted) return;
-				const image = await blobToImageState(blob, 'upscaled.png');
-				if (controller.signal.aborted) return;
-				trackUrl(image.url);
-				const next = { image, settings };
-				setUpscaleResult(next);
-				recordAction({ tool: 'upscale', before: prior, after: next });
-			} catch (e) {
-				if (controller.signal.aborted) return;
-				setError(messageFor(e));
-			} finally {
-				if (!controller.signal.aborted) {
-					setProcessing(null);
-					setProcessingStartedAt(null);
-				}
-			}
-		},
-		[recordAction, trackUrl, getTurnstileToken],
-	);
-
-	const runExpand = useCallback(
-		async (file: File, ratio: AspectRatioPreset, prior: ExpandResultState) => {
-			abortRef.current?.abort();
-			const controller = new AbortController();
-			abortRef.current = controller;
-			setProcessing('expand');
-			setProcessingStartedAt(Date.now());
-			setError(null);
-			try {
-				const turnstileToken = await getTurnstileToken();
-				if (controller.signal.aborted) return;
-				const blob = await api.expand(file, ratio, {
-					signal: controller.signal,
-					turnstileToken,
-				});
-				if (controller.signal.aborted) return;
-				const image = await blobToImageState(blob, `expanded-${ratio.replace(':', 'x')}.png`);
-				if (controller.signal.aborted) return;
-				trackUrl(image.url);
-				const next = { image, ratio };
-				setExpandResult(next);
-				recordAction({ tool: 'expand', before: prior, after: next });
-			} catch (e) {
-				if (controller.signal.aborted) return;
-				setError(messageFor(e));
-			} finally {
-				if (!controller.signal.aborted) {
-					setProcessing(null);
-					setProcessingStartedAt(null);
-				}
-			}
-		},
-		[recordAction, trackUrl, getTurnstileToken],
+		[getTurnstileToken, trackUrl],
 	);
 
 	const handleRunBackground = useCallback(() => {
-		if (!originalFile) return;
-		void runBackground(originalFile, background);
-	}, [originalFile, background, runBackground]);
+		void runStep('background', 'background-removed.png', (file, options) =>
+			api.removeBackground(file, options),
+		);
+	}, [runStep]);
 
-	const handleRetryUpscale = useCallback(() => {
-		if (!originalFile) return;
-		void runUpscale(originalFile, upscaleSettings, upscaleResult);
-	}, [originalFile, upscaleSettings, upscaleResult, runUpscale]);
+	const handleRunUpscale = useCallback(() => {
+		void runStep('upscale', 'upscaled.png', (file, options) =>
+			api.upscale(file, upscaleSettings, options),
+		);
+	}, [runStep, upscaleSettings]);
 
-	const handleGenerateExpand = useCallback(
+	const handleRunExpand = useCallback(
 		(effectiveRatio: AspectRatioPreset) => {
-			if (!originalFile) return;
-			void runExpand(originalFile, effectiveRatio, expandResult);
+			void runStep(
+				'expand',
+				`expanded-${effectiveRatio.replace(':', 'x')}.png`,
+				(file, options) => api.expand(file, effectiveRatio, options),
+			);
 		},
-		[originalFile, expandResult, runExpand],
+		[runStep],
 	);
 
 	/* ------------------------------------------------------------------ *
@@ -450,20 +357,14 @@ export default function App() {
 	 * ------------------------------------------------------------------ */
 
 	const downloadCurrent = useCallback(() => {
-		const result = currentResult(
-			tool,
-			background,
-			upscaleResult?.image,
-			expandResult?.image,
-		);
-		if (!result) return;
+		if (!tip) return;
 		const a = document.createElement('a');
-		a.href = result.url;
-		a.download = result.name;
+		a.href = tip.url;
+		a.download = tip.name;
 		document.body.appendChild(a);
 		a.click();
 		a.remove();
-	}, [tool, background, upscaleResult, expandResult]);
+	}, [tip]);
 
 	/* ------------------------------------------------------------------ *
 	 * Zoom                                                                *
@@ -623,29 +524,30 @@ export default function App() {
 	 * Derived view state                                                  *
 	 * ------------------------------------------------------------------ */
 
-	const result = currentResult(
-		tool,
-		background,
-		upscaleResult?.image,
-		expandResult?.image,
-	);
-	const isProcessing = processing === tool;
-	const canCompare = !!result && !!original && !isProcessing;
-	const canDownload = !!result;
-	const canUndo = undoStack.length > 0;
-	const canRedo = redoStack.length > 0;
+	const hasSteps = steps.length > 0;
+	// A single linear pipeline, so any in-flight job means "busy".
+	const isProcessing = processing !== null;
+	const canCompare = hasSteps && !isProcessing;
+	const canDownload = hasSteps;
+	// Undo/redo are locked during a run so a late result can't append onto a
+	// chain the user just stepped through.
+	const canUndo = hasSteps && !isProcessing;
+	const canRedo = redoSteps.length > 0 && !isProcessing;
 
-	// Per-tool "has a result" flags, used by the sidebar to decide whether
-	// to show the X (undo just this tool's result) on each row.
+	// Transparency checkerboard once the chain includes a background removal —
+	// the alpha carries through any later steps.
+	const tipHasTransparency = steps.some((s) => s.tool === 'background');
+
+	// Sidebar dot: which tools appear anywhere in the current remix chain.
 	const results: Record<Tool, boolean> = {
-		background: background !== null,
-		upscale: upscaleResult !== null,
-		expand: expandResult !== null,
+		background: tipHasTransparency,
+		upscale: steps.some((s) => s.tool === 'upscale'),
+		expand: steps.some((s) => s.tool === 'expand'),
 	};
 
-	// Dimensions for the "After: WxH" label on the compare slider.
-	const afterWidth = result?.width ?? original?.width ?? 0;
-	const afterHeight = result?.height ?? original?.height ?? 0;
+	// "After: WxH" label on the compare slider = the tip's dimensions.
+	const afterWidth = tip?.width ?? 0;
+	const afterHeight = tip?.height ?? 0;
 
 	return (
 		<div
@@ -697,8 +599,8 @@ export default function App() {
 					<Sidebar
 						activeTool={tool}
 						results={results}
+						disabled={isProcessing}
 						onSelectTool={handleSelectTool}
-						onClearResult={handleClearResult}
 					/>
 				</div>
 			</div>
@@ -735,18 +637,19 @@ export default function App() {
 			>
 				{!original ? (
 					<DropZone onFile={handleFile} />
-				) : compareActive && result ? (
+				) : compareActive && tip && hasSteps && !isProcessing ? (
 					<CompareSlider
 						before={original}
-						after={result}
-						showCheckerAfter={tool === 'background'}
+						after={tip}
+						showCheckerAfter={tipHasTransparency}
 						afterWidth={afterWidth}
 						afterHeight={afterHeight}
 					/>
 				) : (
 					<ImageViewer
-						image={result ?? original}
-						tool={tool}
+						image={tip ?? original}
+						tool={processing ?? tool}
+						showChecker={tipHasTransparency}
 						zoom={zoom}
 						pan={pan}
 						smoothZoom={smoothZoom && !isPanning}
@@ -779,30 +682,30 @@ export default function App() {
 							<BackgroundPanel
 								processing={isProcessing}
 								processingStartedAt={isProcessing ? processingStartedAt : null}
-								result={background}
+								result={lastTool === 'background' ? tip : null}
 								onRun={handleRunBackground}
 							/>
 						)}
-						{tool === 'upscale' && (
+						{tool === 'upscale' && tip && (
 							<UpscalePanel
-								image={original}
+								image={tip}
 								settings={upscaleSettings}
 								processing={isProcessing}
 								processingStartedAt={isProcessing ? processingStartedAt : null}
-								hasResult={!!upscaleResult}
+								hasResult={lastTool === 'upscale'}
 								onChangeSettings={setUpscaleSettings}
-								onRetry={handleRetryUpscale}
+								onRetry={handleRunUpscale}
 							/>
 						)}
-						{tool === 'expand' && (
+						{tool === 'expand' && tip && (
 							<ExpandPanel
-								image={original}
+								image={tip}
 								settings={expandSettings}
 								processing={isProcessing}
 								processingStartedAt={isProcessing ? processingStartedAt : null}
-								result={expandResult?.image ?? null}
+								result={lastTool === 'expand' ? tip : null}
 								onChangeSettings={setExpandSettings}
-								onGenerate={handleGenerateExpand}
+								onGenerate={handleRunExpand}
 							/>
 						)}
 					</div>
@@ -823,19 +726,6 @@ export default function App() {
 			/>
 		</div>
 	);
-}
-
-/** Pick the result image to display / download for the current tool. */
-function currentResult(
-	tool: Tool,
-	background: ImageState | null,
-	upscale: ImageState | undefined,
-	expand: ImageState | undefined,
-): ImageState | null {
-	if (tool === 'background') return background;
-	if (tool === 'upscale') return upscale ?? null;
-	if (tool === 'expand') return expand ?? null;
-	return null;
 }
 
 function messageFor(err: unknown): string {

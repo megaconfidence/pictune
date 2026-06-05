@@ -4,7 +4,14 @@ import type { ImageState, Tool } from '../types';
 
 interface ImageViewerProps {
 	image: ImageState;
+	/** The tool whose label the processing badge shows (the running op). */
 	tool: Tool;
+	/**
+	 * Float the image on a transparency checkerboard. Driven by the chain
+	 * (true once a background removal is in the lineage) rather than the
+	 * selected tool, so the checker tracks the actual image, not the panel.
+	 */
+	showChecker: boolean;
 	zoom: number;
 	/**
 	 * Screen-pixel translation applied to the image. Combined with
@@ -47,6 +54,7 @@ const ELAPSED_VISIBLE_AFTER_MS = 3000;
 export function ImageViewer({
 	image,
 	tool,
+	showChecker,
 	zoom,
 	pan,
 	smoothZoom,
@@ -54,8 +62,6 @@ export function ImageViewer({
 	processingStartedAt,
 	error,
 }: ImageViewerProps) {
-	const showChecker = tool === 'background';
-
 	return (
 		<div className="animate-rise relative grid h-full max-h-full w-full max-w-full place-items-center">
 			<div
